@@ -34,6 +34,7 @@ export interface CertificateItem {
   credentialId?: string;
   verifyLink?: string;
   fileUrl?: string;
+  images?: string[]; // Multiple certificate images / pages / badges
   fileType?: 'image' | 'pdf';
   description?: string;
   published: boolean;
@@ -105,7 +106,7 @@ export interface SkillItem {
   id: string;
   name: string;
   category: 'Technical' | 'Frontend' | 'Backend' | 'Languages' | 'Tools & Frameworks' | 'Soft Skills' | 'Other';
-  proficiency?: number; // 1-100 or rating
+  proficiency?: number;
   notes?: string;
   published: boolean;
   createdAt: string;
@@ -119,6 +120,7 @@ export interface AchievementItem {
   description: string;
   rankOrAward?: string;
   proofUrl?: string;
+  proofImages?: string[];
   published: boolean;
   createdAt: string;
 }

@@ -170,6 +170,7 @@ export async function loadPortfolioData(forceRefresh = false): Promise<FullPortf
             credentialId: r.credential_id,
             verifyLink: r.verify_link,
             fileUrl: r.file_url,
+            images: r.images || (r.file_url ? [r.file_url] : []),
             fileType: r.file_type || 'image',
             description: r.description,
             published: Boolean(r.published),
@@ -279,6 +280,7 @@ export async function loadPortfolioData(forceRefresh = false): Promise<FullPortf
             description: r.description,
             rankOrAward: r.rank_or_award,
             proofUrl: r.proof_url,
+            proofImages: r.proof_images || (r.proof_url ? [r.proof_url] : []),
             published: Boolean(r.published),
             createdAt: r.created_at,
           }));

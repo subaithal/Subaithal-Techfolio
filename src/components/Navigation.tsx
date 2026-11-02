@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { TeddyBear } from './TeddyBear';
-import { Menu, X, Sparkles, Send } from 'lucide-react';
+import { Menu, X, Sparkles, Send, Shield } from 'lucide-react';
 
 export type PageId =
   | 'home'
@@ -56,33 +55,35 @@ export const Navigation: React.FC<NavigationProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 w-full backdrop-blur-md bg-[#EBA3B8]/90 border-b border-white/40 shadow-[0_4px_20px_-4px_rgba(143,37,71,0.1)] transition-all">
+    <header className="sticky top-0 z-40 w-full backdrop-blur-xl bg-[#14060E]/85 border-b border-rose-500/20 shadow-[0_4px_30px_rgba(0,0,0,0.5)] transition-all">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
         {/* Brand / Logo */}
         <button
           onClick={() => handleNavClick('home')}
-          className="flex items-center gap-2 text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-[#8F2547] rounded-xl px-2 py-1 -ml-2"
+          className="flex items-center gap-2.5 text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 rounded-xl px-2 py-1 -ml-2 cursor-pointer"
         >
-          <TeddyBear variant="heading" size={30} animated />
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#8E183D] to-[#D4436E] flex items-center justify-center text-white shadow-sm shadow-rose-950/60 font-heading font-extrabold text-sm border border-rose-400/30">
+            S
+          </div>
           <div className="flex flex-col">
-            <span className="font-heading font-extrabold text-lg sm:text-xl text-[#3A0F05] tracking-tight group-hover:text-[#8F2547] transition-colors whitespace-nowrap">
+            <span className="font-heading font-extrabold text-lg sm:text-xl text-rose-50 tracking-tight group-hover:text-rose-300 transition-colors whitespace-nowrap">
               Subaithal S.
             </span>
           </div>
         </button>
 
         {/* Desktop Navigation Links */}
-        <nav className="hidden lg:flex items-center gap-1 xl:gap-2 text-sm font-medium">
+        <nav className="hidden lg:flex items-center gap-1 xl:gap-1.5 text-sm font-medium">
           {visibleNavItems.map((item) => {
             const isActive = currentPage === item.id;
             return (
               <button
                 key={item.id}
                 onClick={() => handleNavClick(item.id)}
-                className={`px-3 py-1.5 rounded-full text-xs xl:text-sm font-medium transition-all whitespace-nowrap ${
+                className={`px-3 py-1.5 rounded-full text-xs xl:text-sm font-medium transition-all whitespace-nowrap cursor-pointer ${
                   isActive
-                    ? 'bg-[#8F2547] text-white shadow-[0_2px_10px_rgba(143,37,71,0.35)]'
-                    : 'text-[#4F2119] hover:text-[#8F2547] hover:bg-white/40'
+                    ? 'bg-gradient-to-r from-[#8E183D] to-[#D4436E] text-white shadow-md shadow-rose-950/50'
+                    : 'text-rose-200/80 hover:text-white hover:bg-white/10'
                 }`}
               >
                 {item.label}
@@ -96,7 +97,7 @@ export const Navigation: React.FC<NavigationProps> = ({
           {/* Quick Contact CTA */}
           <button
             onClick={() => handleNavClick('contact')}
-            className="hidden sm:inline-flex items-center gap-1.5 btn-rose-gradient px-4 py-2 rounded-full text-xs font-semibold tracking-wide uppercase shadow-sm"
+            className="hidden sm:inline-flex items-center gap-1.5 btn-rose-gradient px-4 py-2 rounded-full text-xs font-semibold tracking-wide uppercase shadow-sm cursor-pointer"
           >
             <Send className="w-3.5 h-3.5" />
             <span>Contact Me</span>
@@ -105,22 +106,22 @@ export const Navigation: React.FC<NavigationProps> = ({
           {/* Mobile Menu Button */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="lg:hidden p-2.5 rounded-xl bg-white/60 hover:bg-white/80 text-[#3A0F05] border border-white/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#8F2547]"
+            className="lg:hidden p-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-rose-100 border border-rose-500/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 cursor-pointer"
             aria-label="Toggle navigation menu"
             aria-expanded={mobileMenuOpen}
           >
-            {mobileMenuOpen ? <X className="w-5 h-5 text-[#8F2547]" /> : <Menu className="w-5 h-5" />}
+            {mobileMenuOpen ? <X className="w-5 h-5 text-rose-300" /> : <Menu className="w-5 h-5" />}
           </button>
         </div>
       </div>
 
       {/* Mobile Drawer Navigation */}
       {mobileMenuOpen && (
-        <div className="lg:hidden fixed inset-x-0 top-16 bg-[#F7D0DA]/95 backdrop-blur-xl border-b border-white/60 shadow-xl max-h-[calc(100vh-4rem)] overflow-y-auto z-50 p-4 transition-all animate-in fade-in slide-in-from-top-2 duration-200">
-          <div className="flex items-center justify-between pb-3 mb-2 border-b border-[#E08FA7]/50 text-xs font-semibold text-[#85203F] uppercase tracking-wider">
+        <div className="lg:hidden fixed inset-x-0 top-16 bg-[#170610]/95 backdrop-blur-2xl border-b border-rose-500/25 shadow-2xl max-h-[calc(100vh-4rem)] overflow-y-auto z-50 p-4 transition-all animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center justify-between pb-3 mb-2 border-b border-rose-900/40 text-xs font-semibold text-rose-300 uppercase tracking-wider">
             <span>Explore Portfolio</span>
-            <div className="flex items-center gap-1 text-[11px] text-[#A93A5C]">
-              <Sparkles className="w-3 h-3 text-[#A93A5C]" />
+            <div className="flex items-center gap-1 text-[11px] text-rose-400">
+              <Sparkles className="w-3 h-3 text-rose-400" />
               <span>Subaithal S.</span>
             </div>
           </div>
@@ -132,10 +133,10 @@ export const Navigation: React.FC<NavigationProps> = ({
                 <button
                   key={item.id}
                   onClick={() => handleNavClick(item.id)}
-                  className={`flex items-center justify-start px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all text-left ${
+                  className={`flex items-center justify-start px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all text-left cursor-pointer ${
                     isActive
-                      ? 'bg-[#8F2547] text-white shadow-md'
-                      : 'bg-white/50 text-[#3A0F05] hover:bg-white/80 active:bg-white/90 border border-white/40'
+                      ? 'bg-gradient-to-r from-[#8E183D] to-[#D4436E] text-white shadow-md'
+                      : 'bg-white/5 text-rose-200 hover:bg-white/10 active:bg-white/15 border border-rose-900/40'
                   }`}
                 >
                   <span className="truncate">{item.label}</span>
@@ -144,16 +145,17 @@ export const Navigation: React.FC<NavigationProps> = ({
             })}
           </div>
 
-          <div className="pt-4 mt-3 border-t border-[#E08FA7]/50 flex items-center justify-between">
+          <div className="pt-4 mt-3 border-t border-rose-900/40 flex items-center justify-between">
             <button
               onClick={() => handleNavClick('admin')}
-              className="text-xs text-[#85203F] hover:text-[#8F2547] underline underline-offset-4 font-medium"
+              className="text-xs text-rose-300/80 hover:text-rose-200 flex items-center gap-1 font-medium cursor-pointer"
             >
-              Admin Dashboard
+              <Shield className="w-3.5 h-3.5" />
+              <span>Admin Access</span>
             </button>
             <button
               onClick={() => handleNavClick('contact')}
-              className="btn-rose-gradient px-4 py-2 rounded-full text-xs font-semibold"
+              className="btn-rose-gradient px-4 py-2 rounded-full text-xs font-semibold cursor-pointer"
             >
               Contact Me
             </button>

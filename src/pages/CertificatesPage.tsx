@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { CertificateItem } from '../types/portfolio';
 import { EmptyState } from '../components/EmptyState';
-import { TeddyBear } from '../components/TeddyBear';
-import { Award, ExternalLink, Calendar, FileText, CheckCircle2, X } from 'lucide-react';
+import { ImageLightboxModal } from '../components/ImageLightboxModal';
+import { Award, ExternalLink, Calendar, FileText, Eye, CheckCircle2, Images } from 'lucide-react';
 
 interface CertificatesPageProps {
   certificates: CertificateItem[];
@@ -16,28 +16,58 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({
   onOpenAdmin,
 }) => {
   const publishedCerts = certificates.filter((c) => c.published || isAdmin);
-  const [selectedCert, setSelectedCert] = useState<CertificateItem | null>(null);
+  const [lightboxData, setLightboxData] = useState<{
+    isOpen: boolean;
+    title: string;
+    subtitle: string;
+    images: string[];
+    initialIndex: number;
+  }>({
+    isOpen: false,
+    title: '',
+    subtitle: '',
+    images: [],
+    initialIndex: 0,
+  });
+
+  const handleOpenCertificate = (cert: CertificateItem, initialIndex = 0) => {
+    // Gather all media: cert.images array + cert.fileUrl (if not already included)
+    const allImages: string[] = [];
+    if (cert.fileUrl) allImages.push(cert.fileUrl);
+    if (cert.images && cert.images.length > 0) {
+      cert.images.forEach((img) => {
+        if (!allImages.includes(img)) allImages.push(img);
+      });
+    }
+
+    if (allImages.length === 0) return;
+
+    setLightboxData({
+      isOpen: true,
+      title: cert.title,
+      subtitle: `${cert.issuer} · Issued: ${cert.issueDate}${cert.credentialId ? ` · ID: ${cert.credentialId}` : ''}`,
+      images: allImages,
+      initialIndex,
+    });
+  };
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 sm:pt-10 space-y-8 text-left">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/50 pb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-rose-500/20 pb-6">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <TeddyBear variant="heading" size={26} animated />
-            <h1 className="font-heading font-extrabold text-3xl sm:text-4xl text-[#3A0F05] ribbon-underline">
-              Certifications & Badges
-            </h1>
-          </div>
-          <p className="text-xs sm:text-sm text-[#85203F] mt-2">
-            Verified credentials, accreditations, and course achievements.
+          <h1 className="font-heading font-extrabold text-3xl sm:text-4xl text-rose-50 ribbon-underline">
+            Certifications & Badges
+          </h1>
+          <p className="text-xs sm:text-sm text-rose-300/80 mt-2">
+            Verified professional credentials, licensures, and accreditations.
           </p>
         </div>
 
         {isAdmin && onOpenAdmin && (
           <button
             onClick={onOpenAdmin}
-            className="btn-rose-gradient px-4 py-2 rounded-full text-xs font-semibold self-start sm:self-auto"
+            className="btn-rose-gradient px-4 py-2 rounded-full text-xs font-semibold self-start sm:self-auto cursor-pointer"
           >
             + Add Certificate
           </button>
@@ -54,72 +84,126 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {publishedCerts.map((cert) => {
-            const isPdf = cert.fileUrl?.startsWith('data:application/pdf') || cert.fileUrl?.toLowerCase().endsWith('.pdf');
+            const allMedia: string[] = [];
+            if (cert.fileUrl) allMedia.push(cert.fileUrl);
+            if (cert.images && cert.images.length > 0) {
+              cert.images.forEach((img) => {
+                if (!allMedia.includes(img)) allMedia.push(img);
+              });
+            }
+
+            const primaryImage = allMedia[0] || '';
+            const isPdf = primaryImage.startsWith('data:application/pdf') || primaryImage.toLowerCase().endsWith('.pdf');
+
             return (
               <div
                 key={cert.id}
-                className="glass-card glass-card-hover p-6 rounded-[22px] flex flex-col justify-between space-y-4 border border-white/70 group"
+                className="glass-card glass-card-hover overflow-hidden rounded-[20px] flex flex-col justify-between border border-rose-500/20 group transition-all"
               >
-                <div className="space-y-3">
-                  {/* Top Badge & Issuer */}
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="p-2.5 rounded-2xl bg-white/70 text-[#8F2547] border border-white/80 shadow-xs">
-                      <Award className="w-5 h-5" />
+                {/* Visual Certificate Preview Card Header */}
+                <div 
+                  onClick={() => allMedia.length > 0 && handleOpenCertificate(cert, 0)}
+                  className="relative aspect-[16/10] w-full bg-[#1A0813]/90 border-b border-rose-500/15 overflow-hidden flex items-center justify-center cursor-pointer group"
+                >
+                  {primaryImage ? (
+                    isPdf ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-gradient-to-br from-rose-950/40 to-[#1F0815] text-rose-300">
+                        <FileText className="w-12 h-12 text-rose-400 mb-2" />
+                        <span className="text-xs font-semibold text-rose-200">Verified PDF Credential</span>
+                        <span className="text-[10px] text-rose-400/80 mt-1">Click to view & zoom</span>
+                      </div>
+                    ) : (
+                      <>
+                        <img
+                          src={primaryImage}
+                          alt={cert.title}
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <span className="px-3.5 py-1.5 rounded-full bg-[#16060E]/90 text-rose-200 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 shadow-lg">
+                            <Eye className="w-3.5 h-3.5 text-rose-300" />
+                            <span>View Certificate</span>
+                          </span>
+                        </div>
+                      </>
+                    )
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-gradient-to-br from-rose-950/40 to-[#1F0815] text-rose-400">
+                      <Award className="w-10 h-10 mb-2 opacity-80" />
+                      <span className="text-xs font-medium text-rose-300">Verified Accreditation</span>
                     </div>
-                    {cert.credentialId && (
-                      <span className="text-[10px] font-mono text-[#85203F] bg-white/60 px-2 py-0.5 rounded-md truncate max-w-[140px]">
-                        ID: {cert.credentialId}
-                      </span>
-                    )}
-                  </div>
-
-                  <div>
-                    <h3 className="font-heading font-bold text-lg text-[#3A0F05] group-hover:text-[#8F2547] transition-colors">
-                      {cert.title}
-                    </h3>
-                    <p className="text-xs font-semibold text-[#8F2547] mt-0.5">
-                      {cert.issuer}
-                    </p>
-                  </div>
-
-                  {cert.description && (
-                    <p className="text-xs text-[#4F2119]/80 line-clamp-2 leading-relaxed">
-                      {cert.description}
-                    </p>
                   )}
 
-                  <div className="flex items-center gap-1.5 text-[11px] text-[#4F2119]/70 pt-1">
-                    <Calendar className="w-3.5 h-3.5 text-[#C9577B]" />
-                    <span>Issued: {cert.issueDate}</span>
-                    {cert.expiryDate && <span>· Exp: {cert.expiryDate}</span>}
-                  </div>
+                  {/* Multiple image indicator badge */}
+                  {allMedia.length > 1 && (
+                    <div className="absolute top-3 left-3 bg-[#16060E]/90 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-semibold text-rose-200 border border-rose-500/30 flex items-center gap-1 shadow-sm">
+                      <Images className="w-3 h-3 text-rose-300" />
+                      <span>{allMedia.length} Pages</span>
+                    </div>
+                  )}
+
+                  {/* Credential ID badge */}
+                  {cert.credentialId && (
+                    <div className="absolute top-3 right-3 bg-[#16060E]/90 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-mono text-rose-300 border border-rose-500/30 shadow-sm truncate max-w-[140px]">
+                      ID: {cert.credentialId}
+                    </div>
+                  )}
                 </div>
 
-                {/* Bottom preview or verification link */}
-                <div className="pt-3 border-t border-white/40 flex items-center justify-between">
-                  {cert.fileUrl ? (
-                    <button
-                      onClick={() => setSelectedCert(cert)}
-                      className="text-xs font-semibold text-[#8F2547] hover:underline flex items-center gap-1"
+                {/* Card Body */}
+                <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
+                  <div className="space-y-2">
+                    <h3 
+                      onClick={() => allMedia.length > 0 && handleOpenCertificate(cert, 0)}
+                      className="font-heading font-bold text-lg text-rose-50 group-hover:text-rose-300 transition-colors cursor-pointer"
                     >
-                      <FileText className="w-3.5 h-3.5" />
-                      <span>{isPdf ? 'View PDF' : 'View Certificate'}</span>
-                    </button>
-                  ) : (
-                    <span className="text-[11px] text-[#85203F] italic">Verified entry</span>
-                  )}
+                      {cert.title}
+                    </h3>
+                    <p className="text-xs font-semibold text-[#E65A84]">
+                      {cert.issuer}
+                    </p>
 
-                  {cert.verifyLink && (
-                    <a
-                      href={cert.verifyLink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn-rose-secondary px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1"
-                    >
-                      <span>Verify</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  )}
+                    {cert.description && (
+                      <p className="text-xs text-rose-200/80 line-clamp-2 leading-relaxed">
+                        {cert.description}
+                      </p>
+                    )}
+
+                    <div className="flex items-center gap-1.5 text-[11px] text-rose-300/70 pt-1">
+                      <Calendar className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Issued: {cert.issueDate}</span>
+                      {cert.expiryDate && <span>· Exp: {cert.expiryDate}</span>}
+                    </div>
+                  </div>
+
+                  {/* Card Actions */}
+                  <div className="pt-3 border-t border-rose-500/15 flex items-center justify-between">
+                    {allMedia.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenCertificate(cert, 0)}
+                        className="btn-rose-secondary px-3.5 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 shadow-sm cursor-pointer"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-rose-300" />
+                        <span>View Certificate</span>
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-rose-400 italic">Verified Record</span>
+                    )}
+
+                    {cert.verifyLink && (
+                      <a
+                        href={cert.verifyLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-medium text-rose-300 hover:text-white flex items-center gap-1 hover:underline ml-auto"
+                      >
+                        <span>Verify Issuer</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -127,64 +211,15 @@ export const CertificatesPage: React.FC<CertificatesPageProps> = ({
         </div>
       )}
 
-      {/* Certificate Viewer Modal */}
-      {selectedCert && selectedCert.fileUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="glass-card max-w-3xl w-full max-h-[92vh] flex flex-col p-6 sm:p-7 relative border-2 border-white/80 shadow-2xl overflow-hidden">
-            <button
-              onClick={() => setSelectedCert(null)}
-              className="absolute top-4 right-4 p-2 rounded-full hover:bg-black/10 text-[#85203F] transition-colors"
-              aria-label="Close certificate modal"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-2 mb-3">
-              <TeddyBear variant="heading" size={24} />
-              <div>
-                <h3 className="font-heading font-bold text-lg text-[#3A0F05]">
-                  {selectedCert.title}
-                </h3>
-                <p className="text-xs text-[#85203F]">{selectedCert.issuer}</p>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-auto rounded-xl border border-white/80 bg-white/40 p-2 flex items-center justify-center min-h-[300px]">
-              {selectedCert.fileUrl.startsWith('data:application/pdf') || selectedCert.fileUrl.toLowerCase().endsWith('.pdf') ? (
-                <iframe
-                  src={selectedCert.fileUrl}
-                  title={selectedCert.title}
-                  className="w-full h-[500px] rounded-lg border-0"
-                />
-              ) : (
-                <img
-                  src={selectedCert.fileUrl}
-                  alt={selectedCert.title}
-                  referrerPolicy="no-referrer"
-                  className="max-h-[500px] w-auto object-contain rounded-lg shadow-sm"
-                />
-              )}
-            </div>
-
-            <div className="mt-4 pt-3 border-t border-white/50 flex items-center justify-between">
-              <span className="text-xs text-[#85203F]">
-                Credential ID: {selectedCert.credentialId || 'N/A'}
-              </span>
-              <div className="flex items-center gap-2">
-                <a
-                  href={selectedCert.fileUrl}
-                  download={`certificate-${selectedCert.title.replace(/\s+/g, '_')}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-rose-gradient px-4 py-2 rounded-full text-xs font-semibold"
-                >
-                  Download Document
-                </a>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Full Certificate Lightbox with Zoom, Rotate, and Multi-page strip */}
+      <ImageLightboxModal
+        isOpen={lightboxData.isOpen}
+        onClose={() => setLightboxData({ ...lightboxData, isOpen: false })}
+        title={lightboxData.title}
+        subtitle={lightboxData.subtitle}
+        images={lightboxData.images}
+        initialIndex={lightboxData.initialIndex}
+      />
     </div>
   );
 };

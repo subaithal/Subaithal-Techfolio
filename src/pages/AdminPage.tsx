@@ -97,6 +97,39 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isSettingUpNewPassword, setIsSettingUpNewPassword] = useState(false);
+
+  // Check Supabase session on mount and listen to auth state changes
+  useEffect(() => {
+    if (isSupabaseConfigured()) {
+      const client = getSupabaseClient();
+      if (client) {
+        client.auth.getSession().then(({ data: { session } }) => {
+          if (session?.user?.email?.toLowerCase() === 'subaithalnowfie@gmail.com') {
+            setIsAuthenticated(true);
+            setAuthEmail(session.user.email);
+            sessionStorage.setItem('subaithal_admin_auth', 'true');
+          }
+        });
+
+        const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
+          if (session?.user?.email?.toLowerCase() === 'subaithalnowfie@gmail.com') {
+            setIsAuthenticated(true);
+            setAuthEmail(session.user.email);
+            sessionStorage.setItem('subaithal_admin_auth', 'true');
+          } else if (session?.user) {
+            // Reject any unauthorized user
+            client.auth.signOut();
+            setIsAuthenticated(false);
+            sessionStorage.removeItem('subaithal_admin_auth');
+            setAuthError('Access denied: Only subaithalnowfie@gmail.com is authorized.');
+          }
+        });
+
+        return () => subscription.unsubscribe();
+      }
+    }
+  }, []);
 
   // Active Admin Tab
   const [activeTab, setActiveTab] = useState<
@@ -167,45 +200,73 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
+    const normalizedEmail = authEmail.toLowerCase().trim();
+
+    // Strict access control: Only authorized owner email
+    if (normalizedEmail !== 'subaithalnowfie@gmail.com') {
+      setAuthError('Access denied: Only subaithalnowfie@gmail.com has administrator rights to this dashboard.');
+      return;
+    }
+
+    if (authPassword.length < 4) {
+      setAuthError('Please enter a password of at least 4 characters.');
+      return;
+    }
+
     setIsLoggingIn(true);
 
     try {
-      // 1. If Supabase is configured, try Supabase Auth first
+      // 1. Try Supabase Auth if configured
       if (isSupabaseConfigured()) {
         const client = getSupabaseClient();
         if (client) {
-          const { data, error } = await client.auth.signInWithPassword({
-            email: authEmail.trim(),
-            password: authPassword.trim(),
-          });
-          if (!error && data.user) {
-            setIsAuthenticated(true);
-            sessionStorage.setItem('subaithal_admin_auth', 'true');
-            setIsLoggingIn(false);
-            return;
+          if (isSettingUpNewPassword) {
+            // Register or reset password in Supabase Auth
+            const { data, error } = await client.auth.signUp({
+              email: normalizedEmail,
+              password: authPassword.trim(),
+            });
+            if (error) throw error;
+            if (data.user) {
+              setIsAuthenticated(true);
+              sessionStorage.setItem('subaithal_admin_auth', 'true');
+              setIsLoggingIn(false);
+              return;
+            }
+          } else {
+            const { data, error } = await client.auth.signInWithPassword({
+              email: normalizedEmail,
+              password: authPassword.trim(),
+            });
+
+            if (!error && data.user) {
+              if (data.user.email?.toLowerCase() !== 'subaithalnowfie@gmail.com') {
+                await client.auth.signOut();
+                throw new Error('Access denied: Unauthorized email account.');
+              }
+              setIsAuthenticated(true);
+              sessionStorage.setItem('subaithal_admin_auth', 'true');
+              setIsLoggingIn(false);
+              return;
+            }
+
+            // If login fails due to credentials and user might not have signed up yet
+            if (error?.message?.toLowerCase().includes('invalid login credentials')) {
+              setAuthError('Invalid credentials. If you have not created your Supabase password yet, click "Set Up / Reset Supabase Password" below.');
+              setIsLoggingIn(false);
+              return;
+            }
+
+            if (error) throw error;
           }
         }
       }
 
-      // 2. Owner Passcode & Email Authentication fallback
-      // Allows immediate access for owner: subaithalnowfie@gmail.com
-      if (
-        authEmail.toLowerCase().trim() === 'subaithalnowfie@gmail.com' ||
-        authEmail.toLowerCase().trim() === 'admin'
-      ) {
-        if (authPassword.length >= 4) {
-          setIsAuthenticated(true);
-          sessionStorage.setItem('subaithal_admin_auth', 'true');
-          setIsLoggingIn(false);
-          return;
-        } else {
-          setAuthError('Please enter a password of at least 4 characters.');
-        }
-      } else {
-        setAuthError('Unauthorized. Only the owner account (subaithalnowfie@gmail.com) has admin rights.');
-      }
+      // 2. Owner access check (when running standalone or local storage)
+      setIsAuthenticated(true);
+      sessionStorage.setItem('subaithal_admin_auth', 'true');
     } catch (err: any) {
-      setAuthError(err?.message || 'Login failed.');
+      setAuthError(err?.message || 'Authentication error.');
     } finally {
       setIsLoggingIn(false);
     }
@@ -323,55 +384,70 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   if (!isAuthenticated) {
     return (
       <div className="min-h-[75vh] flex items-center justify-center p-4">
-        <div className="glass-card max-w-md w-full p-8 rounded-[24px] border-2 border-white/80 shadow-2xl space-y-6 text-left">
+        <div className="glass-card max-w-md w-full p-8 rounded-[24px] border border-rose-500/30 shadow-2xl space-y-6 text-left bg-rose-950/60 backdrop-blur-xl">
           <div className="text-center space-y-2">
-            <div className="inline-flex p-3 bg-white/70 rounded-full border border-white/80 shadow-xs mb-1">
+            <div className="inline-flex p-3 bg-rose-900/60 rounded-full border border-rose-500/30 shadow-inner mb-1">
               <TeddyBear variant="heading" size={38} animated />
             </div>
-            <h2 className="font-heading font-black text-2xl text-[#3A0F05]">
+            <h2 className="font-heading font-black text-2xl text-rose-100 tracking-tight">
               Subaithal's Admin Portal
             </h2>
-            <p className="text-xs text-[#85203F]">
-              Owner-only authentication to manage projects, certificates, and site content.
+            <p className="text-xs text-rose-300/80">
+              Authorized owner authentication to manage certificates, projects, and portfolio content.
             </p>
           </div>
 
           {authError && (
-            <div className="p-3 bg-red-100/90 border border-red-200 text-xs text-red-700 rounded-xl flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
+            <div className="p-3 bg-rose-950/80 border border-rose-500/40 text-xs text-rose-200 rounded-xl flex items-start gap-2 shadow-sm">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
               <span>{authError}</span>
             </div>
           )}
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-[#3A0F05]">
-                Admin Email
+              <label className="text-xs font-semibold text-rose-200">
+                Authorized Admin Email
               </label>
               <input
                 type="email"
                 required
                 value={authEmail}
                 onChange={(e) => setAuthEmail(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-white/70 border border-white/80 focus:bg-white text-xs text-[#3A0F05] focus:outline-none focus:ring-2 focus:ring-[#8F2547]"
+                placeholder="subaithalnowfie@gmail.com"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-rose-950/60 border border-rose-500/30 focus:border-rose-400 text-xs text-rose-100 focus:outline-none focus:ring-1 focus:ring-rose-400 placeholder:text-rose-400/40"
               />
+              <span className="text-[10px] text-rose-400/80 block">
+                Restricted strictly to owner: subaithalnowfie@gmail.com
+              </span>
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-[#3A0F05]">
-                Admin Password / Key
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-rose-200">
+                  Password
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingUpNewPassword(!isSettingUpNewPassword)}
+                  className="text-[11px] text-rose-300 hover:text-rose-100 underline cursor-pointer"
+                >
+                  {isSettingUpNewPassword ? 'Switch to Sign In' : 'Set Up / Register Supabase Auth'}
+                </button>
+              </div>
               <input
                 type="password"
                 required
-                placeholder="Enter password..."
+                placeholder={isSettingUpNewPassword ? 'Create your new password...' : 'Enter your password...'}
                 value={authPassword}
                 onChange={(e) => setAuthPassword(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-white/70 border border-white/80 focus:bg-white text-xs text-[#3A0F05] focus:outline-none focus:ring-2 focus:ring-[#8F2547]"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-rose-950/60 border border-rose-500/30 focus:border-rose-400 text-xs text-rose-100 focus:outline-none focus:ring-1 focus:ring-rose-400 placeholder:text-rose-400/40"
               />
-              <span className="text-[10px] text-[#85203F] block">
-                Default owner access initialized for Subaithal S.
-              </span>
+              {isSettingUpNewPassword && (
+                <span className="text-[10px] text-rose-300 block">
+                  This will register or update your Supabase Auth user credentials.
+                </span>
+              )}
             </div>
 
             <div className="pt-2">
@@ -381,15 +457,21 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                 className="w-full btn-rose-gradient py-2.5 rounded-full text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 shadow-md disabled:opacity-60 cursor-pointer"
               >
                 <Lock className="w-4 h-4" />
-                <span>{isLoggingIn ? 'Verifying...' : 'Sign In as Owner'}</span>
+                <span>
+                  {isLoggingIn
+                    ? 'Authenticating...'
+                    : isSettingUpNewPassword
+                    ? 'Register / Update Supabase Auth'
+                    : 'Sign In as Owner'}
+                </span>
               </button>
             </div>
           </form>
 
-          <div className="pt-4 border-t border-white/50 text-center">
+          <div className="pt-4 border-t border-rose-500/20 text-center">
             <button
               onClick={onExitAdmin}
-              className="text-xs text-[#85203F] hover:text-[#8F2547] underline underline-offset-2 font-medium"
+              className="text-xs text-rose-300 hover:text-rose-100 underline underline-offset-2 font-medium cursor-pointer"
             >
               &larr; Return to Public Portfolio
             </button>
@@ -1698,11 +1780,26 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                 </div>
               </div>
 
+              <MultiPhotoUpload
+                label="Certificate Images & Badges (Multiple Photo Support)"
+                photos={editingCert.images || (editingCert.fileUrl ? [editingCert.fileUrl] : [])}
+                onChange={(urls) => {
+                  setEditingCert({
+                    ...editingCert,
+                    images: urls,
+                    fileUrl: urls[0] || editingCert.fileUrl || '',
+                  });
+                }}
+                maxFiles={25}
+                helperText="Upload certificate photo(s) or badge snapshots (PNG, JPG, WebP) - visitors can zoom and preview each image"
+              />
+
               <FileUpload
-                label="Certificate Document (PDF or Image)"
-                allowedTypes={['image', 'pdf']}
+                label="Or Upload PDF Document"
+                allowedTypes={['pdf', 'image']}
                 value={editingCert.fileUrl}
                 onChange={(url) => setEditingCert({ ...editingCert, fileUrl: url })}
+                helperText="Optional if you have a PDF certificate rather than image photos"
               />
 
               <div className="flex items-center gap-2 pt-2">
@@ -2340,11 +2437,26 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                 />
               </div>
 
+              <MultiPhotoUpload
+                label="Proof Images & Photos (Multiple Photos Support)"
+                photos={editingAch.proofImages || (editingAch.proofUrl ? [editingAch.proofUrl] : [])}
+                onChange={(urls) => {
+                  setEditingAch({
+                    ...editingAch,
+                    proofImages: urls,
+                    proofUrl: urls[0] || editingAch.proofUrl || '',
+                  });
+                }}
+                maxFiles={10}
+                helperText="Upload award photos, medals, podium snapshots (PNG, JPG, WebP) - visitors can zoom and preview each image"
+              />
+
               <FileUpload
-                label="Proof Document or Photo (Optional)"
-                allowedTypes={['image', 'pdf']}
+                label="Or Upload PDF Document"
+                allowedTypes={['pdf', 'image']}
                 value={editingAch.proofUrl}
                 onChange={(url) => setEditingAch({ ...editingAch, proofUrl: url })}
+                helperText="Optional if you have a single PDF proof document"
               />
 
               <div className="pt-4 border-t border-white/50 flex items-center justify-end gap-2">
