@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Upload, X, Image as ImageIcon, AlertTriangle, Eye, Plus, CheckCircle2 } from 'lucide-react';
-import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
+import { getSupabaseClient, isSupabaseConfigured, uploadFileToSupabase } from '../lib/supabase';
 
 interface MultiPhotoUploadProps {
   label: string;
@@ -59,28 +59,20 @@ export const MultiPhotoUpload: React.FC<MultiPhotoUploadProps> = ({
       const uploadedUrls: string[] = [];
 
       for (const file of validFiles) {
-        // 1. Try Supabase Storage if configured
+        // 1. If Supabase is configured, upload directly to Supabase Storage
         if (isSupabaseConfigured()) {
-          const client = getSupabaseClient();
-          if (client) {
-            const ext = file.name.split('.').pop();
-            const filePath = `photos/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
-
-            const { error: uploadError } = await client.storage
-              .from('portfolio-assets')
-              .upload(filePath, file, { cacheControl: '3600', upsert: true });
-
-            if (!uploadError) {
-              const { data: publicData } = client.storage
-                .from('portfolio-assets')
-                .getPublicUrl(filePath);
-              uploadedUrls.push(publicData.publicUrl);
-              continue;
-            }
+          const result = await uploadFileToSupabase(file, 'photos');
+          if (result.error || !result.url) {
+            clearInterval(progressInterval);
+            setProgress(null);
+            setError(result.error || `Failed to upload "${file.name}" to Supabase Storage.`);
+            return;
           }
+          uploadedUrls.push(result.url);
+          continue;
         }
 
-        // 2. Base64 fallback (persisted in IndexedDB without quota issues)
+        // 2. Base64 fallback (offline/local only)
         const base64Url = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result as string);

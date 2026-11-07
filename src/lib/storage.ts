@@ -443,38 +443,57 @@ export async function deleteProject(id: string): Promise<void> {
 }
 
 export async function saveCertificate(item: CertificateItem): Promise<void> {
-  const current = await loadPortfolioData();
-  const index = current.certificates.findIndex(c => c.id === item.id);
-  if (index >= 0) {
-    current.certificates[index] = item;
-  } else {
-    current.certificates.unshift(item);
-  }
-  await savePortfolioData(current);
+  let savedItem = { ...item };
 
   if (isSupabaseConfigured()) {
     try {
       const client = getSupabaseClient();
       if (client) {
-        await client.from('portfolio_certificates').upsert({
-          id: item.id.startsWith('cert_') ? undefined : item.id,
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id);
+        const payload: any = {
           title: item.title,
           issuer: item.issuer,
           issue_date: item.issueDate,
-          expiry_date: item.expiryDate,
-          credential_id: item.credentialId,
-          verify_link: item.verifyLink,
-          file_url: item.fileUrl,
+          expiry_date: item.expiryDate || null,
+          credential_id: item.credentialId || null,
+          verify_link: item.verifyLink || null,
+          file_url: item.fileUrl || (item.images && item.images[0]) || null,
+          images: item.images || (item.fileUrl ? [item.fileUrl] : []),
           file_type: item.fileType || 'image',
-          description: item.description,
-          published: item.published,
+          description: item.description || '',
+          published: item.published ?? true,
           created_at: item.createdAt || new Date().toISOString(),
-        });
+        };
+
+        if (isUuid) {
+          payload.id = item.id;
+        }
+
+        const { data, error } = await client
+          .from('portfolio_certificates')
+          .upsert(payload)
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Supabase certificate upsert error:', error);
+        } else if (data && data.id) {
+          savedItem.id = data.id;
+        }
       }
     } catch (e) {
       console.warn('Supabase cert sync error:', e);
     }
   }
+
+  const current = await loadPortfolioData();
+  const index = current.certificates.findIndex(c => c.id === item.id || c.id === savedItem.id);
+  if (index >= 0) {
+    current.certificates[index] = savedItem;
+  } else {
+    current.certificates.unshift(savedItem);
+  }
+  await savePortfolioData(current);
 }
 
 export async function deleteCertificate(id: string): Promise<void> {
@@ -739,35 +758,54 @@ export async function deleteSkill(id: string): Promise<void> {
 }
 
 export async function saveAchievement(item: AchievementItem): Promise<void> {
-  const current = await loadPortfolioData();
-  const index = current.achievements.findIndex(a => a.id === item.id);
-  if (index >= 0) {
-    current.achievements[index] = item;
-  } else {
-    current.achievements.unshift(item);
-  }
-  await savePortfolioData(current);
+  let savedItem = { ...item };
 
   if (isSupabaseConfigured()) {
     try {
       const client = getSupabaseClient();
       if (client) {
-        await client.from('portfolio_achievements').upsert({
-          id: item.id.startsWith('ach_') ? undefined : item.id,
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id);
+        const payload: any = {
           title: item.title,
           issuer_or_event: item.issuerOrEvent,
           date: item.date,
           description: item.description,
-          rank_or_award: item.rankOrAward,
-          proof_url: item.proofUrl,
-          published: item.published,
+          rank_or_award: item.rankOrAward || null,
+          proof_url: item.proofUrl || (item.proofImages && item.proofImages[0]) || null,
+          proof_images: item.proofImages || (item.proofUrl ? [item.proofUrl] : []),
+          published: item.published ?? true,
           created_at: item.createdAt || new Date().toISOString(),
-        });
+        };
+
+        if (isUuid) {
+          payload.id = item.id;
+        }
+
+        const { data, error } = await client
+          .from('portfolio_achievements')
+          .upsert(payload)
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Supabase achievement upsert error:', error);
+        } else if (data && data.id) {
+          savedItem.id = data.id;
+        }
       }
     } catch (e) {
       console.warn('Supabase ach sync error:', e);
     }
   }
+
+  const current = await loadPortfolioData();
+  const index = current.achievements.findIndex(a => a.id === item.id || a.id === savedItem.id);
+  if (index >= 0) {
+    current.achievements[index] = savedItem;
+  } else {
+    current.achievements.unshift(savedItem);
+  }
+  await savePortfolioData(current);
 }
 
 export async function deleteAchievement(id: string): Promise<void> {

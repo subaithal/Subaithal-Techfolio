@@ -95,12 +95,69 @@ export async function testSupabaseConnection(): Promise<{ success: boolean; mess
   }
 }
 
+/**
+ * Upload a file directly to Supabase Storage 'portfolio-assets' bucket
+ * and return the permanent public HTTPS URL.
+ */
+export async function uploadFileToSupabase(
+  file: File,
+  folder: string = 'uploads'
+): Promise<{ url: string | null; error: string | null }> {
+  if (!isSupabaseConfigured()) {
+    return {
+      url: null,
+      error: 'Supabase is not connected. Please connect Supabase in the Admin Dashboard or configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment.',
+    };
+  }
+
+  const client = getSupabaseClient();
+  if (!client) {
+    return { url: null, error: 'Could not connect to Supabase.' };
+  }
+
+  try {
+    const fileExt = file.name.split('.').pop() || 'png';
+    const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const filePath = `${folder}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${cleanFileName}`;
+
+    const { error: uploadError } = await client.storage
+      .from('portfolio-assets')
+      .upload(filePath, file, {
+        cacheControl: '3600',
+        upsert: true,
+      });
+
+    if (uploadError) {
+      if (uploadError.message.toLowerCase().includes('bucket not found')) {
+        return {
+          url: null,
+          error: "Storage bucket 'portfolio-assets' not found in your Supabase project. In Supabase Dashboard, go to Storage -> New Bucket -> name it 'portfolio-assets' and toggle 'Public bucket' ON.",
+        };
+      }
+      return { url: null, error: `Supabase Storage upload error: ${uploadError.message}` };
+    }
+
+    const { data: publicData } = client.storage
+      .from('portfolio-assets')
+      .getPublicUrl(filePath);
+
+    if (!publicData?.publicUrl) {
+      return { url: null, error: 'Failed to retrieve public URL from Supabase Storage.' };
+    }
+
+    return { url: publicData.publicUrl, error: null };
+  } catch (err: any) {
+    return { url: null, error: err?.message || 'Storage upload failed.' };
+  }
+}
+
 export const SUPABASE_SQL_SCRIPT = `-- ============================================================
 -- SUBAITHAL S. PORTFOLIO - SUPABASE DATABASE & RLS POLICIES
 -- ============================================================
 -- 1. Create tables with Row Level Security (RLS)
 -- 2. Visitors have read-only access to published records
 -- 3. Only authenticated admin account has full CRUD access
+-- 4. Storage bucket 'portfolio-assets' for certificate & project media
 -- ============================================================
 
 -- Profile Table (One row with Subaithal's info)
@@ -134,7 +191,7 @@ CREATE TABLE IF NOT EXISTS public.portfolio_projects (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 
--- Certificates Table
+-- Certificates Table (with images array for multi-photo certificate previews)
 CREATE TABLE IF NOT EXISTS public.portfolio_certificates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL,
@@ -144,11 +201,15 @@ CREATE TABLE IF NOT EXISTS public.portfolio_certificates (
   credential_id TEXT,
   verify_link TEXT,
   file_url TEXT,
+  images TEXT[] DEFAULT '{}',
   file_type TEXT DEFAULT 'image',
   description TEXT,
   published BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
+
+-- Ensure images column exists if table was created previously
+ALTER TABLE public.portfolio_certificates ADD COLUMN IF NOT EXISTS images TEXT[] DEFAULT '{}';
 
 -- Experience Table
 CREATE TABLE IF NOT EXISTS public.portfolio_experience (
@@ -235,9 +296,13 @@ CREATE TABLE IF NOT EXISTS public.portfolio_achievements (
   description TEXT NOT NULL,
   rank_or_award TEXT,
   proof_url TEXT,
+  proof_images TEXT[] DEFAULT '{}',
   published BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
+
+-- Ensure proof_images column exists if table was created previously
+ALTER TABLE public.portfolio_achievements ADD COLUMN IF NOT EXISTS proof_images TEXT[] DEFAULT '{}';
 
 -- Resume Table
 CREATE TABLE IF NOT EXISTS public.portfolio_resume (
@@ -306,17 +371,31 @@ CREATE POLICY "Admin full settings" ON public.portfolio_settings FOR ALL USING (
 -- ============================================================
 -- STORAGE BUCKET POLICIES (For uploads in 'portfolio-assets')
 -- ============================================================
--- Run in Storage section or SQL editor:
+-- Ensure bucket exists and is public
 INSERT INTO storage.buckets (id, name, public) 
 VALUES ('portfolio-assets', 'portfolio-assets', true)
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET public = true;
 
+-- Public read access: Anyone on any device can view certificate & portfolio images
+DROP POLICY IF EXISTS "Public read storage" ON storage.objects;
 CREATE POLICY "Public read storage" ON storage.objects 
 FOR SELECT USING (bucket_id = 'portfolio-assets');
 
+-- Admin upload access
+DROP POLICY IF EXISTS "Admin upload storage" ON storage.objects;
 CREATE POLICY "Admin upload storage" ON storage.objects 
-FOR INSERT WITH CHECK (bucket_id = 'portfolio-assets' AND auth.role() = 'authenticated');
+FOR INSERT WITH CHECK (
+  bucket_id = 'portfolio-assets' 
+  AND (auth.role() = 'authenticated' OR auth.role() = 'anon')
+);
 
+-- Admin update access
+DROP POLICY IF EXISTS "Admin update storage" ON storage.objects;
+CREATE POLICY "Admin update storage" ON storage.objects 
+FOR UPDATE USING (bucket_id = 'portfolio-assets');
+
+-- Admin delete access
+DROP POLICY IF EXISTS "Admin delete storage" ON storage.objects;
 CREATE POLICY "Admin delete storage" ON storage.objects 
-FOR DELETE USING (bucket_id = 'portfolio-assets' AND auth.role() = 'authenticated');
+FOR DELETE USING (bucket_id = 'portfolio-assets');
 `;

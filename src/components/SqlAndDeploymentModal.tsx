@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { SUPABASE_SQL_SCRIPT } from '../lib/supabase';
-import { Copy, Check, X, Database, Cloud, Terminal, ShieldCheck } from 'lucide-react';
+import { Copy, Check, X, Database, Cloud, ShieldCheck } from 'lucide-react';
 import { TeddyBear } from './TeddyBear';
 
 interface SqlAndDeploymentModalProps {
@@ -24,24 +24,24 @@ export const SqlAndDeploymentModal: React.FC<SqlAndDeploymentModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="glass-card max-w-3xl w-full max-h-[90vh] flex flex-col p-6 sm:p-8 relative border-2 border-white/70 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
+      <div className="glass-card max-w-3xl w-full max-h-[90vh] flex flex-col p-6 sm:p-8 relative border border-rose-500/30 bg-[#16060E]/95 shadow-2xl rounded-[24px]">
         {/* Modal Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-white/50">
+        <div className="flex items-center justify-between pb-4 border-b border-rose-500/20">
           <div className="flex items-center gap-2.5">
             <TeddyBear variant="heading" size={28} />
             <div>
-              <h2 className="font-heading font-extrabold text-xl text-[#3A0F05]">
+              <h2 className="font-heading font-extrabold text-xl text-rose-100">
                 Supabase SQL & Vercel Deployment Guide
               </h2>
-              <p className="text-xs text-[#85203F]">
-                Everything you need to connect your real Supabase database and launch live
+              <p className="text-xs text-rose-300/80">
+                Configure your real Supabase database, public storage bucket, and Vercel hosting.
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-black/5 text-[#85203F]"
+            className="p-1.5 rounded-full hover:bg-rose-900/40 text-rose-300 transition-colors cursor-pointer"
             aria-label="Close modal"
           >
             <X className="w-5 h-5" />
@@ -49,25 +49,25 @@ export const SqlAndDeploymentModal: React.FC<SqlAndDeploymentModalProps> = ({
         </div>
 
         {/* Tab selection */}
-        <div className="flex items-center gap-2 mt-4 pb-2 border-b border-white/40 overflow-x-auto text-xs font-semibold">
+        <div className="flex items-center gap-2 mt-4 pb-2 border-b border-rose-500/20 overflow-x-auto text-xs font-semibold">
           <button
             onClick={() => setActiveTab('sql')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'sql'
-                ? 'bg-[#8F2547] text-white shadow-sm'
-                : 'bg-white/50 text-[#3A0F05] hover:bg-white/80'
+                ? 'bg-rose-700 text-white shadow-sm border border-rose-400/30'
+                : 'bg-rose-950/50 text-rose-300 hover:bg-rose-900/50'
             }`}
           >
             <Database className="w-3.5 h-3.5" />
-            <span>Supabase SQL Script (RLS + Tables)</span>
+            <span>Supabase SQL Script (Tables + Storage + RLS)</span>
           </button>
 
           <button
             onClick={() => setActiveTab('supabase')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'supabase'
-                ? 'bg-[#8F2547] text-white shadow-sm'
-                : 'bg-white/50 text-[#3A0F05] hover:bg-white/80'
+                ? 'bg-rose-700 text-white shadow-sm border border-rose-400/30'
+                : 'bg-rose-950/50 text-rose-300 hover:bg-rose-900/50'
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5" />
@@ -76,89 +76,86 @@ export const SqlAndDeploymentModal: React.FC<SqlAndDeploymentModalProps> = ({
 
           <button
             onClick={() => setActiveTab('vercel')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all whitespace-nowrap cursor-pointer ${
               activeTab === 'vercel'
-                ? 'bg-[#8F2547] text-white shadow-sm'
-                : 'bg-white/50 text-[#3A0F05] hover:bg-white/80'
+                ? 'bg-rose-700 text-white shadow-sm border border-rose-400/30'
+                : 'bg-rose-950/50 text-rose-300 hover:bg-rose-900/50'
             }`}
           >
             <Cloud className="w-3.5 h-3.5" />
-            <span>Vercel Deployment Guide</span>
+            <span>Vercel Multi-Device Setup</span>
           </button>
         </div>
 
         {/* Tab Content */}
-        <div className="flex-1 overflow-y-auto mt-4 text-xs text-[#3A0F05] space-y-4 pr-1">
+        <div className="flex-1 overflow-y-auto mt-4 text-xs text-rose-100 space-y-4 pr-1">
           {activeTab === 'sql' && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between bg-white/60 p-3 rounded-2xl border border-white/80">
-                <span className="text-xs text-[#4F2119]">
-                  Copy this complete schema to run in your <strong>Supabase SQL Editor</strong>. It sets up all 11 tables, storage bucket, and strict Row Level Security (public read for published items, admin-only write).
+              <div className="flex items-center justify-between bg-rose-950/60 p-3.5 rounded-2xl border border-rose-500/30">
+                <span className="text-xs text-rose-200">
+                  Run this SQL in your <strong>Supabase SQL Editor</strong>. It creates all tables (including certificate multi-images array), sets up the public <strong>portfolio-assets</strong> storage bucket, and enforces public read + owner write policies.
                 </span>
                 <button
                   onClick={handleCopySql}
-                  className="btn-rose-gradient px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shrink-0 ml-3"
+                  className="btn-rose-gradient px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shrink-0 ml-3 cursor-pointer"
                 >
                   {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                   <span>{copied ? 'Copied SQL!' : 'Copy SQL Script'}</span>
                 </button>
               </div>
 
-              <div className="relative rounded-2xl overflow-hidden border border-black/10 bg-[#231A24] text-pink-100 font-mono text-[11px] p-4 max-h-[380px] overflow-y-auto">
+              <div className="relative rounded-2xl overflow-hidden border border-rose-500/30 bg-[#0E040A] text-rose-200 font-mono text-[11px] p-4 max-h-[380px] overflow-y-auto">
                 <pre>{SUPABASE_SQL_SCRIPT}</pre>
               </div>
             </div>
           )}
 
           {activeTab === 'supabase' && (
-            <div className="space-y-3 bg-white/50 p-5 rounded-2xl border border-white/80">
-              <h4 className="font-heading font-bold text-sm text-[#8F2547]">
+            <div className="space-y-3 bg-rose-950/50 p-5 rounded-2xl border border-rose-500/30">
+              <h4 className="font-heading font-bold text-sm text-rose-200">
                 Step-by-Step Supabase Setup:
               </h4>
-              <ol className="list-decimal pl-4 space-y-2.5 text-xs text-[#4F2119]/90 leading-relaxed">
+              <ol className="list-decimal pl-4 space-y-3 text-xs text-rose-200/90 leading-relaxed">
                 <li>
-                  <strong>Create a Supabase Project:</strong> Go to <a href="https://supabase.com" target="_blank" rel="noreferrer" className="text-[#8F2547] underline font-semibold">supabase.com</a>, log in or sign up, and click <strong>"New Project"</strong>. Choose a name (e.g. <code>subaithal-portfolio</code>) and a database password.
+                  <strong>Create a Supabase Project:</strong> Go to <a href="https://supabase.com" target="_blank" rel="noreferrer" className="text-rose-300 underline font-semibold">supabase.com</a>, log in or sign up, and create a new project.
                 </li>
                 <li>
-                  <strong>Run the Database SQL:</strong> In your Supabase project sidebar, click on <strong>SQL Editor</strong> &rarr; <strong>"New Query"</strong>. Paste the SQL script from the SQL tab above, and click <strong>"Run"</strong>.
+                  <strong>Run the SQL Query:</strong> Click <strong>SQL Editor</strong> &rarr; <strong>New query</strong> in your Supabase dashboard. Paste the SQL script from the SQL tab and click <strong>Run</strong>.
                 </li>
                 <li>
-                  <strong>Get Your API Credentials:</strong> In Supabase sidebar, go to <strong>Project Settings &rarr; API</strong>. Copy the <strong>Project URL</strong> and the <strong>anon / public key</strong>.
+                  <strong>Create or Verify the Storage Bucket:</strong> In the Supabase sidebar, go to <strong>Storage</strong>. Verify the bucket <strong>portfolio-assets</strong> is listed. If not created, click <strong>New bucket</strong>, name it <code>portfolio-assets</code>, and toggle <strong>Public bucket</strong> to <strong>ON</strong>.
                 </li>
                 <li>
-                  <strong>Enter Them in the Dashboard:</strong> Click <strong>"Supabase Connection"</strong> inside the Admin Dashboard and paste both values. Your portfolio is now permanently backed by your live Supabase database!
+                  <strong>Create Your Admin User:</strong> Go to <strong>Authentication &rarr; Users</strong>. Click <strong>Add user &rarr; Create user</strong>. Enter email <code>subaithalnowfie@gmail.com</code> and your private password. Disable public signup in <em>Authentication &rarr; Providers / Settings</em> so nobody else can register.
                 </li>
                 <li>
-                  <strong>Admin Account:</strong> In <strong>Authentication &rarr; Users</strong>, click <strong>"Add User"</strong> &rarr; <strong>"Create User"</strong> with your email <code>subaithalnowfie@gmail.com</code> and a secure password. Disable public signup in <em>Auth &rarr; Settings</em> to guarantee nobody else can register.
+                  <strong>Copy API Keys:</strong> Go to <strong>Project Settings &rarr; API</strong>. Copy the <strong>Project URL</strong> and <strong>anon public key</strong>.
                 </li>
               </ol>
             </div>
           )}
 
           {activeTab === 'vercel' && (
-            <div className="space-y-3 bg-white/50 p-5 rounded-2xl border border-white/80">
-              <h4 className="font-heading font-bold text-sm text-[#8F2547]">
-                Beginner-Friendly Vercel Deployment:
+            <div className="space-y-3 bg-rose-950/50 p-5 rounded-2xl border border-rose-500/30">
+              <h4 className="font-heading font-bold text-sm text-rose-200">
+                Vercel Setup for Permanent Multi-Device Access:
               </h4>
-              <ol className="list-decimal pl-4 space-y-2.5 text-xs text-[#4F2119]/90 leading-relaxed">
+              <p className="text-xs text-rose-300">
+                To ensure all certificates and portfolio data are visible to every visitor on any phone, laptop, or browser without needing local configuration:
+              </p>
+              <ol className="list-decimal pl-4 space-y-3 text-xs text-rose-200/90 leading-relaxed">
                 <li>
-                  <strong>Push code to GitHub:</strong> Ensure your repository on GitHub (<a href="https://github.com/Subaithals" target="_blank" rel="noreferrer" className="text-[#8F2547] underline font-semibold">github.com/Subaithals</a>) contains the portfolio code.
+                  Go to your project on <a href="https://vercel.com" target="_blank" rel="noreferrer" className="text-rose-300 underline font-semibold">vercel.com</a> &rarr; <strong>Settings &rarr; Environment Variables</strong>.
                 </li>
                 <li>
-                  <strong>Sign in to Vercel:</strong> Visit <a href="https://vercel.com" target="_blank" rel="noreferrer" className="text-[#8F2547] underline font-semibold">vercel.com</a> and sign in with your GitHub account.
-                </li>
-                <li>
-                  <strong>Import Git Repository:</strong> Click <strong>"Add New..." &rarr; "Project"</strong>, locate your repository, and click <strong>Import</strong>.
-                </li>
-                <li>
-                  <strong>Configure Environment Variables:</strong> Under <em>Environment Variables</em>, add:
-                  <div className="my-2 bg-[#2D1B28] text-pink-100 p-2.5 rounded-xl font-mono text-[11px] space-y-1">
-                    <div>VITE_SUPABASE_URL=https://your-project.supabase.co</div>
-                    <div>VITE_SUPABASE_ANON_KEY=eyJhbGciOi...</div>
+                  Add these two variables (from your Supabase API settings):
+                  <div className="my-2 bg-[#0E040A] text-rose-300 p-3 rounded-xl font-mono text-[11px] space-y-1.5 border border-rose-500/30">
+                    <div><strong>VITE_SUPABASE_URL</strong> = https://your-project.supabase.co</div>
+                    <div><strong>VITE_SUPABASE_ANON_KEY</strong> = eyJhbGciOi...</div>
                   </div>
                 </li>
                 <li>
-                  <strong>Click Deploy:</strong> Vercel will build and assign you a free fast HTTPS domain (e.g. <code>subaithal.vercel.app</code>) with instant global CDN caching and automatic updates whenever you push changes!
+                  Click <strong>Deployments &rarr; Redeploy</strong> (or push a new commit to GitHub). Once deployed, Vercel will bake the Supabase connection directly into the client, making your published certificates visible to everyone in the world!
                 </li>
               </ol>
             </div>
@@ -166,10 +163,10 @@ export const SqlAndDeploymentModal: React.FC<SqlAndDeploymentModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="mt-5 pt-3 border-t border-white/50 flex items-center justify-end">
+        <div className="mt-5 pt-3 border-t border-rose-500/20 flex items-center justify-end">
           <button
             onClick={onClose}
-            className="btn-rose-secondary px-5 py-2 rounded-full text-xs font-semibold"
+            className="btn-rose-secondary px-5 py-2 rounded-full text-xs font-semibold cursor-pointer"
           >
             Close Guide
           </button>

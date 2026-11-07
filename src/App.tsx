@@ -94,20 +94,20 @@ export default function App() {
 
   if (loading || !data) {
     return (
-      <div className="min-h-screen bg-rose-hearts flex flex-col items-center justify-center p-6 text-[#3A0F05]">
-        <div className="glass-card p-8 rounded-[22px] flex flex-col items-center space-y-4 shadow-xl border border-white/80">
-          <div className="w-12 h-12 rounded-full border-3 border-[#8F2547] border-t-transparent animate-spin" />
-          <h2 className="font-heading font-extrabold text-xl tracking-tight">
+      <div className="min-h-screen bg-rose-hearts flex flex-col items-center justify-center p-6 text-rose-100">
+        <div className="glass-card p-8 rounded-[24px] flex flex-col items-center space-y-4 shadow-2xl border border-rose-500/30 bg-rose-950/60 backdrop-blur-xl">
+          <div className="w-12 h-12 rounded-full border-3 border-rose-500 border-t-transparent animate-spin" />
+          <h2 className="font-heading font-extrabold text-xl tracking-tight text-rose-100">
             Subaithal S.
           </h2>
-          <p className="text-xs text-[#85203F]">Preparing sweet portfolio...</p>
+          <p className="text-xs text-rose-300">Loading portfolio...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-rose-hearts text-[#4F2119] flex flex-col justify-between overflow-x-hidden selection:bg-[#8F2547] selection:text-white">
+    <div className="min-h-screen bg-rose-hearts text-rose-100 flex flex-col justify-between overflow-x-hidden selection:bg-rose-600 selection:text-white">
       {/* Top Header Navigation */}
       <Navigation
         currentPage={currentPage}

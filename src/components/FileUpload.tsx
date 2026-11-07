@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Upload, FileText, CheckCircle2, AlertTriangle, X, Image as ImageIcon } from 'lucide-react';
-import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
+import { getSupabaseClient, isSupabaseConfigured, uploadFileToSupabase } from '../lib/supabase';
 
 interface FileUploadProps {
   label: string;
@@ -72,38 +72,27 @@ export const FileUpload: React.FC<FileUploadProps> = ({
     }, 120);
 
     try {
-      // If Supabase Storage is configured, upload to 'portfolio-assets' bucket
+      // If Supabase Storage is configured, upload directly to 'portfolio-assets' bucket
       if (isSupabaseConfigured()) {
-        const client = getSupabaseClient();
-        if (client) {
-          const fileExt = file.name.split('.').pop();
-          const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
-          const filePath = `uploads/${fileName}`;
+        const result = await uploadFileToSupabase(file, 'certificates');
+        clearInterval(progressInterval);
 
-          const { error: uploadError } = await client.storage
-            .from('portfolio-assets')
-            .upload(filePath, file, {
-              cacheControl: '3600',
-              upsert: true,
-            });
-
-          if (!uploadError) {
-            const { data: publicData } = client.storage
-              .from('portfolio-assets')
-              .getPublicUrl(filePath);
-
-            clearInterval(progressInterval);
-            setProgress(100);
-            setTimeout(() => {
-              onChange(publicData.publicUrl);
-              setProgress(null);
-            }, 300);
-            return;
-          }
+        if (result.error || !result.url) {
+          setProgress(null);
+          setError(result.error || 'Failed to upload file to Supabase Storage.');
+          if (fileInputRef.current) fileInputRef.current.value = '';
+          return;
         }
+
+        setProgress(100);
+        setTimeout(() => {
+          onChange(result.url!);
+          setProgress(null);
+        }, 300);
+        return;
       }
 
-      // Local / Offline Base64 Fallback:
+      // Offline / Local base64 preview (when Supabase is not yet configured)
       const reader = new FileReader();
       reader.onload = () => {
         clearInterval(progressInterval);
@@ -116,7 +105,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
       reader.onerror = () => {
         clearInterval(progressInterval);
         setProgress(null);
-        setError('Failed to read file.');
+        setError('Failed to read local file.');
       };
       reader.readAsDataURL(file);
     } catch (err: any) {
