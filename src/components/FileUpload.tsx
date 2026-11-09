@@ -92,22 +92,11 @@ export const FileUpload: React.FC<FileUploadProps> = ({
         return;
       }
 
-      // Offline / Local base64 preview (when Supabase is not yet configured)
-      const reader = new FileReader();
-      reader.onload = () => {
-        clearInterval(progressInterval);
-        setProgress(100);
-        setTimeout(() => {
-          onChange(reader.result as string);
-          setProgress(null);
-        }, 300);
-      };
-      reader.onerror = () => {
-        clearInterval(progressInterval);
-        setProgress(null);
-        setError('Failed to read local file.');
-      };
-      reader.readAsDataURL(file);
+      // If Supabase is not configured, do not silently create device-only local base64
+      clearInterval(progressInterval);
+      setProgress(null);
+      setError('Supabase connection is required to upload files so they are visible on all devices. Please verify VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (err: any) {
       clearInterval(progressInterval);
       setProgress(null);

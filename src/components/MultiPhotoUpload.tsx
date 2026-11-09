@@ -58,28 +58,23 @@ export const MultiPhotoUpload: React.FC<MultiPhotoUploadProps> = ({
     try {
       const uploadedUrls: string[] = [];
 
-      for (const file of validFiles) {
-        // 1. If Supabase is configured, upload directly to Supabase Storage
-        if (isSupabaseConfigured()) {
-          const result = await uploadFileToSupabase(file, 'photos');
-          if (result.error || !result.url) {
-            clearInterval(progressInterval);
-            setProgress(null);
-            setError(result.error || `Failed to upload "${file.name}" to Supabase Storage.`);
-            return;
-          }
-          uploadedUrls.push(result.url);
-          continue;
-        }
+      if (!isSupabaseConfigured()) {
+        clearInterval(progressInterval);
+        setProgress(null);
+        setError('Supabase connection is required to upload photos so they are visible to everyone on all devices. Please verify VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
+      }
 
-        // 2. Base64 fallback (offline/local only)
-        const base64Url = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
-        uploadedUrls.push(base64Url);
+      for (const file of validFiles) {
+        const result = await uploadFileToSupabase(file, 'photos');
+        if (result.error || !result.url) {
+          clearInterval(progressInterval);
+          setProgress(null);
+          setError(result.error || `Failed to upload "${file.name}" to Supabase Storage.`);
+          return;
+        }
+        uploadedUrls.push(result.url);
       }
 
       clearInterval(progressInterval);

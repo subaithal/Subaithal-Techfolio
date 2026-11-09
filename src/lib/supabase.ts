@@ -3,7 +3,10 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const STORAGE_KEY_URL = 'subaithal_sb_url';
 const STORAGE_KEY_ANON = 'subaithal_sb_anon';
 
-// Default to env vars if provided, otherwise check stored config
+// Default Supabase project URL for Subaithal Techfolio
+export const DEFAULT_SUPABASE_URL = 'https://lopobdesxnqynmlpkppn.supabase.co';
+
+// Default to env vars if provided (Vercel / Vite), otherwise check stored config or default
 export function getSupabaseCredentials(): { url: string; anonKey: string } {
   const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
   const envAnon = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
@@ -11,9 +14,15 @@ export function getSupabaseCredentials(): { url: string; anonKey: string } {
   const storedUrl = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY_URL) || '' : '';
   const storedAnon = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY_ANON) || '' : '';
 
+  const clean = (val: string) => (val ? val.replace(/^["']|["']$/g, '').trim() : '');
+
+  // Environment variables from Vercel take precedence, followed by saved admin config, and project default
+  const url = clean(envUrl) || clean(storedUrl) || DEFAULT_SUPABASE_URL;
+  const anonKey = clean(envAnon) || clean(storedAnon);
+
   return {
-    url: storedUrl.trim() || envUrl.trim(),
-    anonKey: storedAnon.trim() || envAnon.trim(),
+    url,
+    anonKey,
   };
 }
 
@@ -125,6 +134,7 @@ export async function uploadFileToSupabase(
       .upload(filePath, file, {
         cacheControl: '3600',
         upsert: true,
+        contentType: file.type || undefined,
       });
 
     if (uploadError) {
@@ -152,15 +162,19 @@ export async function uploadFileToSupabase(
 }
 
 export const SUPABASE_SQL_SCRIPT = `-- ============================================================
--- SUBAITHAL S. PORTFOLIO - SUPABASE DATABASE & RLS POLICIES
+-- SUBAITHAL S. PORTFOLIO - COMPLETE SUPABASE DATABASE & RLS POLICIES
 -- ============================================================
--- 1. Create tables with Row Level Security (RLS)
--- 2. Visitors have read-only access to published records
--- 3. Only authenticated admin account has full CRUD access
--- 4. Storage bucket 'portfolio-assets' for certificate & project media
+-- 1. Create tables with IF NOT EXISTS (non-destructive)
+-- 2. Add columns with IF NOT EXISTS
+-- 3. Grant schema & table permissions to anon and authenticated roles
+-- 4. Enable Row Level Security (RLS) on all 11 tables
+-- 5. Drop any legacy or conflicting policies
+-- 6. Public visitors have read-only SELECT access to published records
+-- 7. Strictly restrict INSERT, UPDATE, DELETE to subaithalnowfie@gmail.com
+-- 8. Configure public 'portfolio-assets' storage bucket with admin-only write
 -- ============================================================
 
--- Profile Table (One row with Subaithal's info)
+-- 1. TABLES CREATION (Non-destructive)
 CREATE TABLE IF NOT EXISTS public.portfolio_profile (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL DEFAULT 'Subaithal S.',
@@ -175,7 +189,6 @@ CREATE TABLE IF NOT EXISTS public.portfolio_profile (
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 
--- Projects Table
 CREATE TABLE IF NOT EXISTS public.portfolio_projects (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL,
@@ -191,7 +204,6 @@ CREATE TABLE IF NOT EXISTS public.portfolio_projects (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 
--- Certificates Table (with images array for multi-photo certificate previews)
 CREATE TABLE IF NOT EXISTS public.portfolio_certificates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL,
@@ -208,10 +220,6 @@ CREATE TABLE IF NOT EXISTS public.portfolio_certificates (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 
--- Ensure images column exists if table was created previously
-ALTER TABLE public.portfolio_certificates ADD COLUMN IF NOT EXISTS images TEXT[] DEFAULT '{}';
-
--- Experience Table
 CREATE TABLE IF NOT EXISTS public.portfolio_experience (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization TEXT NOT NULL,
@@ -228,7 +236,6 @@ CREATE TABLE IF NOT EXISTS public.portfolio_experience (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 
--- Internships Table
 CREATE TABLE IF NOT EXISTS public.portfolio_internships (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization TEXT NOT NULL,
@@ -245,7 +252,6 @@ CREATE TABLE IF NOT EXISTS public.portfolio_internships (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 
--- Events Table
 CREATE TABLE IF NOT EXISTS public.portfolio_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL,
@@ -261,7 +267,6 @@ CREATE TABLE IF NOT EXISTS public.portfolio_events (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 
--- Education Table
 CREATE TABLE IF NOT EXISTS public.portfolio_education (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   college TEXT NOT NULL,
@@ -276,7 +281,6 @@ CREATE TABLE IF NOT EXISTS public.portfolio_education (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 
--- Skills Table
 CREATE TABLE IF NOT EXISTS public.portfolio_skills (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
@@ -287,7 +291,6 @@ CREATE TABLE IF NOT EXISTS public.portfolio_skills (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 
--- Achievements Table
 CREATE TABLE IF NOT EXISTS public.portfolio_achievements (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL,
@@ -301,10 +304,6 @@ CREATE TABLE IF NOT EXISTS public.portfolio_achievements (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 
--- Ensure proof_images column exists if table was created previously
-ALTER TABLE public.portfolio_achievements ADD COLUMN IF NOT EXISTS proof_images TEXT[] DEFAULT '{}';
-
--- Resume Table
 CREATE TABLE IF NOT EXISTS public.portfolio_resume (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   file_url TEXT,
@@ -315,7 +314,6 @@ CREATE TABLE IF NOT EXISTS public.portfolio_resume (
   published BOOLEAN DEFAULT true
 );
 
--- Settings Table
 CREATE TABLE IF NOT EXISTS public.portfolio_settings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   hidden_sections JSONB DEFAULT '{}'::jsonb,
@@ -324,8 +322,24 @@ CREATE TABLE IF NOT EXISTS public.portfolio_settings (
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
 
+-- Ensure multi-image support columns exist if tables were created earlier
+ALTER TABLE public.portfolio_certificates ADD COLUMN IF NOT EXISTS images TEXT[] DEFAULT '{}';
+ALTER TABLE public.portfolio_achievements ADD COLUMN IF NOT EXISTS proof_images TEXT[] DEFAULT '{}';
+ALTER TABLE public.portfolio_events ADD COLUMN IF NOT EXISTS photos TEXT[] DEFAULT '{}';
+ALTER TABLE public.portfolio_projects ADD COLUMN IF NOT EXISTS screenshots TEXT[] DEFAULT '{}';
+
 -- ============================================================
--- ROW LEVEL SECURITY (RLS) POLICIES
+-- 2. TABLE & SCHEMA GRANTS (Ensures PostgREST roles have permissions)
+-- ============================================================
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO authenticated;
+
+-- ============================================================
+-- 3. ROW LEVEL SECURITY (RLS) POLICIES
 -- ============================================================
 ALTER TABLE public.portfolio_profile ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.portfolio_projects ENABLE ROW LEVEL SECURITY;
@@ -339,63 +353,180 @@ ALTER TABLE public.portfolio_achievements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.portfolio_resume ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.portfolio_settings ENABLE ROW LEVEL SECURITY;
 
--- 1. Public can read:
--- Profile: anyone can view
-CREATE POLICY "Public profile read" ON public.portfolio_profile FOR SELECT USING (true);
--- Settings: anyone can view
-CREATE POLICY "Public settings read" ON public.portfolio_settings FOR SELECT USING (true);
--- Other tables: only published rows can be seen by public
-CREATE POLICY "Public projects read" ON public.portfolio_projects FOR SELECT USING (published = true OR auth.role() = 'authenticated');
-CREATE POLICY "Public certs read" ON public.portfolio_certificates FOR SELECT USING (published = true OR auth.role() = 'authenticated');
-CREATE POLICY "Public exp read" ON public.portfolio_experience FOR SELECT USING (published = true OR auth.role() = 'authenticated');
-CREATE POLICY "Public interns read" ON public.portfolio_internships FOR SELECT USING (published = true OR auth.role() = 'authenticated');
-CREATE POLICY "Public events read" ON public.portfolio_events FOR SELECT USING (published = true OR auth.role() = 'authenticated');
-CREATE POLICY "Public edu read" ON public.portfolio_education FOR SELECT USING (published = true OR auth.role() = 'authenticated');
-CREATE POLICY "Public skills read" ON public.portfolio_skills FOR SELECT USING (published = true OR auth.role() = 'authenticated');
-CREATE POLICY "Public achievements read" ON public.portfolio_achievements FOR SELECT USING (published = true OR auth.role() = 'authenticated');
-CREATE POLICY "Public resume read" ON public.portfolio_resume FOR SELECT USING (published = true OR auth.role() = 'authenticated');
+-- Clean up any prior, legacy, or conflicting policies
+DO $$
+DECLARE
+  t text;
+  pol text;
+  tables text[] := ARRAY[
+    'portfolio_profile',
+    'portfolio_projects',
+    'portfolio_certificates',
+    'portfolio_experience',
+    'portfolio_internships',
+    'portfolio_events',
+    'portfolio_education',
+    'portfolio_skills',
+    'portfolio_achievements',
+    'portfolio_resume',
+    'portfolio_settings'
+  ];
+BEGIN
+  FOREACH t IN ARRAY tables LOOP
+    FOR pol IN (SELECT policyname FROM pg_policies WHERE tablename = t AND schemaname = 'public') LOOP
+      EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', pol, t);
+    END LOOP;
+  END LOOP;
+END $$;
 
--- 2. Authenticated Admin has ALL permissions (insert, update, delete):
-CREATE POLICY "Admin full profile" ON public.portfolio_profile FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Admin full projects" ON public.portfolio_projects FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Admin full certs" ON public.portfolio_certificates FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Admin full exp" ON public.portfolio_experience FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Admin full interns" ON public.portfolio_internships FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Admin full events" ON public.portfolio_events FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Admin full edu" ON public.portfolio_education FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Admin full skills" ON public.portfolio_skills FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Admin full achievements" ON public.portfolio_achievements FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Admin full resume" ON public.portfolio_resume FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "Admin full settings" ON public.portfolio_settings FOR ALL USING (auth.role() = 'authenticated');
+-- 4. PUBLIC READ POLICIES
+-- Profile and Settings: Public visitors can view profile and site settings
+CREATE POLICY "Public profile read" ON public.portfolio_profile
+  FOR SELECT USING (true);
+
+CREATE POLICY "Public settings read" ON public.portfolio_settings
+  FOR SELECT USING (true);
+
+-- Published items are public; unpublished drafts are only visible to subaithalnowfie@gmail.com
+CREATE POLICY "Public projects read" ON public.portfolio_projects
+  FOR SELECT USING (published = true OR (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com'));
+
+CREATE POLICY "Public certs read" ON public.portfolio_certificates
+  FOR SELECT USING (published = true OR (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com'));
+
+CREATE POLICY "Public exp read" ON public.portfolio_experience
+  FOR SELECT USING (published = true OR (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com'));
+
+CREATE POLICY "Public interns read" ON public.portfolio_internships
+  FOR SELECT USING (published = true OR (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com'));
+
+CREATE POLICY "Public events read" ON public.portfolio_events
+  FOR SELECT USING (published = true OR (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com'));
+
+CREATE POLICY "Public edu read" ON public.portfolio_education
+  FOR SELECT USING (published = true OR (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com'));
+
+CREATE POLICY "Public skills read" ON public.portfolio_skills
+  FOR SELECT USING (published = true OR (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com'));
+
+CREATE POLICY "Public achievements read" ON public.portfolio_achievements
+  FOR SELECT USING (published = true OR (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com'));
+
+CREATE POLICY "Public resume read" ON public.portfolio_resume
+  FOR SELECT USING (published = true OR (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com'));
+
+-- 5. OWNER-ONLY WRITE POLICIES (Strictly subaithalnowfie@gmail.com)
+CREATE POLICY "Only subaithalnowfie can manage profile" ON public.portfolio_profile
+  FOR ALL TO authenticated
+  USING (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  WITH CHECK (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com');
+
+CREATE POLICY "Only subaithalnowfie can manage settings" ON public.portfolio_settings
+  FOR ALL TO authenticated
+  USING (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  WITH CHECK (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com');
+
+CREATE POLICY "Only subaithalnowfie can manage projects" ON public.portfolio_projects
+  FOR ALL TO authenticated
+  USING (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  WITH CHECK (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com');
+
+CREATE POLICY "Only subaithalnowfie can manage certificates" ON public.portfolio_certificates
+  FOR ALL TO authenticated
+  USING (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  WITH CHECK (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com');
+
+CREATE POLICY "Only subaithalnowfie can manage experience" ON public.portfolio_experience
+  FOR ALL TO authenticated
+  USING (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  WITH CHECK (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com');
+
+CREATE POLICY "Only subaithalnowfie can manage internships" ON public.portfolio_internships
+  FOR ALL TO authenticated
+  USING (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  WITH CHECK (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com');
+
+CREATE POLICY "Only subaithalnowfie can manage events" ON public.portfolio_events
+  FOR ALL TO authenticated
+  USING (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  WITH CHECK (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com');
+
+CREATE POLICY "Only subaithalnowfie can manage education" ON public.portfolio_education
+  FOR ALL TO authenticated
+  USING (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  WITH CHECK (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com');
+
+CREATE POLICY "Only subaithalnowfie can manage skills" ON public.portfolio_skills
+  FOR ALL TO authenticated
+  USING (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  WITH CHECK (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com');
+
+CREATE POLICY "Only subaithalnowfie can manage achievements" ON public.portfolio_achievements
+  FOR ALL TO authenticated
+  USING (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  WITH CHECK (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com');
+
+CREATE POLICY "Only subaithalnowfie can manage resume" ON public.portfolio_resume
+  FOR ALL TO authenticated
+  USING (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  WITH CHECK (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com');
 
 -- ============================================================
--- STORAGE BUCKET POLICIES (For uploads in 'portfolio-assets')
+-- 6. STORAGE BUCKET POLICIES (portfolio-assets)
 -- ============================================================
--- Ensure bucket exists and is public
+-- Ensure bucket exists and is public without dropping existing files
 INSERT INTO storage.buckets (id, name, public) 
 VALUES ('portfolio-assets', 'portfolio-assets', true)
 ON CONFLICT (id) DO UPDATE SET public = true;
 
--- Public read access: Anyone on any device can view certificate & portfolio images
-DROP POLICY IF EXISTS "Public read storage" ON storage.objects;
-CREATE POLICY "Public read storage" ON storage.objects 
-FOR SELECT USING (bucket_id = 'portfolio-assets');
+ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 
--- Admin upload access
-DROP POLICY IF EXISTS "Admin upload storage" ON storage.objects;
-CREATE POLICY "Admin upload storage" ON storage.objects 
-FOR INSERT WITH CHECK (
-  bucket_id = 'portfolio-assets' 
-  AND (auth.role() = 'authenticated' OR auth.role() = 'anon')
-);
+-- Clean up storage policies on storage.objects
+DO $$
+DECLARE
+  pol text;
+BEGIN
+  FOR pol IN (SELECT policyname FROM pg_policies WHERE tablename = 'objects' AND schemaname = 'storage') LOOP
+    IF pol ILIKE '%portfolio%' OR pol ILIKE '%subaithal%' OR pol ILIKE '%Public%' THEN
+      EXECUTE format('DROP POLICY IF EXISTS %I ON storage.objects', pol);
+    END IF;
+  END LOOP;
+END $$;
 
--- Admin update access
-DROP POLICY IF EXISTS "Admin update storage" ON storage.objects;
-CREATE POLICY "Admin update storage" ON storage.objects 
-FOR UPDATE USING (bucket_id = 'portfolio-assets');
+-- 1. Public visitors can view / download assets
+CREATE POLICY "Public can view portfolio assets" ON storage.objects
+  FOR SELECT
+  USING (bucket_id = 'portfolio-assets');
 
--- Admin delete access
-DROP POLICY IF EXISTS "Admin delete storage" ON storage.objects;
-CREATE POLICY "Admin delete storage" ON storage.objects 
-FOR DELETE USING (bucket_id = 'portfolio-assets');
+-- 2. ONLY subaithalnowfie@gmail.com can upload
+CREATE POLICY "Only subaithalnowfie can upload portfolio assets" ON storage.objects
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    bucket_id = 'portfolio-assets'
+    AND (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  );
+
+-- 3. ONLY subaithalnowfie@gmail.com can update
+CREATE POLICY "Only subaithalnowfie can update portfolio assets" ON storage.objects
+  FOR UPDATE
+  TO authenticated
+  USING (
+    bucket_id = 'portfolio-assets'
+    AND (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  )
+  WITH CHECK (
+    bucket_id = 'portfolio-assets'
+    AND (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  );
+
+-- 4. ONLY subaithalnowfie@gmail.com can delete
+CREATE POLICY "Only subaithalnowfie can delete portfolio assets" ON storage.objects
+  FOR DELETE
+  TO authenticated
+  USING (
+    bucket_id = 'portfolio-assets'
+    AND (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
+  );
 `;
+

@@ -10,7 +10,9 @@ import {
   ChevronRight, 
   Maximize, 
   Minimize,
-  FileText
+  FileText,
+  AlertTriangle,
+  ExternalLink
 } from 'lucide-react';
 
 interface ImageLightboxModalProps {
@@ -37,6 +39,8 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [imageError, setImageError] = useState(false);
+  const [imageLoading, setImageLoading] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Sync index when opening
@@ -46,8 +50,15 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
       setZoom(1);
       setRotation(0);
       setPan({ x: 0, y: 0 });
+      setImageError(false);
+      setImageLoading(true);
     }
   }, [isOpen, initialIndex, images]);
+
+  useEffect(() => {
+    setImageError(false);
+    setImageLoading(true);
+  }, [currentIndex]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -288,18 +299,67 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
               className="w-full h-full border-0 bg-white"
             />
           </div>
+        ) : imageError ? (
+          <div className="flex flex-col items-center justify-center p-8 bg-rose-950/80 border border-rose-500/40 rounded-2xl max-w-md text-center space-y-4 shadow-2xl z-10 m-4">
+            <div className="p-3 bg-rose-900/50 rounded-full border border-rose-500/30">
+              <AlertTriangle className="w-10 h-10 text-rose-400" />
+            </div>
+            <div className="space-y-1.5">
+              <h4 className="font-heading font-bold text-base text-rose-100">
+                Certificate Image Unavailable
+              </h4>
+              <p className="text-xs text-rose-300/80 leading-relaxed">
+                This image could not be loaded from Supabase cloud storage. Check your network connection or verify that the storage bucket policy is active.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setImageError(false);
+                  setImageLoading(true);
+                }}
+                className="btn-rose-secondary px-4 py-2 rounded-full text-xs font-semibold cursor-pointer"
+              >
+                Retry Loading
+              </button>
+              {currentUrl && (
+                <a
+                  href={currentUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-rose-gradient px-4 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Open URL Directly</span>
+                </a>
+              )}
+            </div>
+          </div>
         ) : (
           <div 
-            className="transition-transform duration-100 ease-out flex items-center justify-center max-w-full max-h-full"
+            className="transition-transform duration-100 ease-out flex items-center justify-center max-w-full max-h-full relative"
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom}) rotate(${rotation}deg)`,
             }}
           >
+            {imageLoading && (
+              <div className="absolute inset-0 flex items-center justify-center z-10">
+                <div className="w-8 h-8 rounded-full border-2 border-rose-500 border-t-transparent animate-spin" />
+              </div>
+            )}
             <img
               src={currentUrl}
               alt={title || 'Preview'}
               referrerPolicy="no-referrer"
-              className="max-h-[75vh] max-w-[90vw] object-contain rounded-xl shadow-2xl pointer-events-none"
+              onLoad={() => setImageLoading(false)}
+              onError={() => {
+                setImageLoading(false);
+                setImageError(true);
+              }}
+              className={`max-h-[75vh] max-w-[90vw] object-contain rounded-xl shadow-2xl pointer-events-none transition-opacity duration-200 ${
+                imageLoading ? 'opacity-0' : 'opacity-100'
+              }`}
             />
           </div>
         )}

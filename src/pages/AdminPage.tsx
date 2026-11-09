@@ -35,7 +35,11 @@ import {
   saveAchievement,
   deleteAchievement,
   saveResume,
-  saveSettings
+  saveSettings,
+  migrateLocalDataToSupabase,
+  MigrationResult,
+  ensureValidUuid,
+  getPendingLocalSyncCount
 } from '../lib/storage';
 import { 
   isSupabaseConfigured, 
@@ -74,7 +78,8 @@ import {
   Eye, 
   EyeOff,
   Compass,
-  Sparkles
+  Sparkles,
+  Cloud
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -179,9 +184,29 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [sbTestResult, setSbTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isTestingSb, setIsTestingSb] = useState(false);
 
+  // Migration state
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationStatus, setMigrationStatus] = useState<string>('');
+  const [migrationResult, setMigrationResult] = useState<MigrationResult | null>(null);
+  const [pendingSync, setPendingSync] = useState<{
+    hasPending: boolean;
+    total: number;
+    breakdown: Record<string, number>;
+  }>({ hasPending: false, total: 0, breakdown: {} });
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      getPendingLocalSyncCount().then(res => {
+        setPendingSync(res);
+      });
+    }
+  }, [isAuthenticated, portfolioData]);
+
   // Item Editing Modals
   const [editingProject, setEditingProject] = useState<ProjectItem | null>(null);
   const [editingCert, setEditingCert] = useState<CertificateItem | null>(null);
+  const [certModalError, setCertModalError] = useState<string | null>(null);
+  const [isSavingCert, setIsSavingCert] = useState(false);
   const [editingExp, setEditingExp] = useState<ExperienceItem | null>(null);
   const [editingIntern, setEditingIntern] = useState<InternshipItem | null>(null);
   const [editingEvent, setEditingEvent] = useState<EventItem | null>(null);
@@ -216,55 +241,57 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     setIsLoggingIn(true);
 
     try {
-      // 1. Try Supabase Auth if configured
+      // 1. Authenticate with Supabase Auth if configured
       if (isSupabaseConfigured()) {
         const client = getSupabaseClient();
-        if (client) {
-          if (isSettingUpNewPassword) {
-            // Register or reset password in Supabase Auth
-            const { data, error } = await client.auth.signUp({
-              email: normalizedEmail,
-              password: authPassword.trim(),
-            });
-            if (error) throw error;
-            if (data.user) {
-              setIsAuthenticated(true);
-              sessionStorage.setItem('subaithal_admin_auth', 'true');
+        if (!client) {
+          throw new Error('Supabase client could not be initialized.');
+        }
+
+        if (isSettingUpNewPassword) {
+          // Register or set up user in Supabase Auth
+          const { data, error } = await client.auth.signUp({
+            email: normalizedEmail,
+            password: authPassword.trim(),
+          });
+          if (error) throw error;
+          if (data.user) {
+            setIsAuthenticated(true);
+            sessionStorage.setItem('subaithal_admin_auth', 'true');
+            setIsLoggingIn(false);
+            return;
+          }
+        } else {
+          const { data, error } = await client.auth.signInWithPassword({
+            email: normalizedEmail,
+            password: authPassword.trim(),
+          });
+
+          if (error) {
+            if (error.message.toLowerCase().includes('invalid login credentials')) {
+              setAuthError('Invalid credentials. If you have not created your password in Supabase Authentication yet, click "Set Up / Register Supabase Auth" below or create the user in the Supabase Dashboard.');
               setIsLoggingIn(false);
               return;
             }
-          } else {
-            const { data, error } = await client.auth.signInWithPassword({
-              email: normalizedEmail,
-              password: authPassword.trim(),
-            });
+            throw error;
+          }
 
-            if (!error && data.user) {
-              if (data.user.email?.toLowerCase() !== 'subaithalnowfie@gmail.com') {
-                await client.auth.signOut();
-                throw new Error('Access denied: Unauthorized email account.');
-              }
-              setIsAuthenticated(true);
-              sessionStorage.setItem('subaithal_admin_auth', 'true');
-              setIsLoggingIn(false);
-              return;
+          if (data.user) {
+            if (data.user.email?.toLowerCase() !== 'subaithalnowfie@gmail.com') {
+              await client.auth.signOut();
+              throw new Error('Access denied: Unauthorized email account. Only subaithalnowfie@gmail.com is permitted.');
             }
-
-            // If login fails due to credentials and user might not have signed up yet
-            if (error?.message?.toLowerCase().includes('invalid login credentials')) {
-              setAuthError('Invalid credentials. If you have not created your Supabase password yet, click "Set Up / Reset Supabase Password" below.');
-              setIsLoggingIn(false);
-              return;
-            }
-
-            if (error) throw error;
+            setIsAuthenticated(true);
+            sessionStorage.setItem('subaithal_admin_auth', 'true');
+            setIsLoggingIn(false);
+            return;
           }
         }
+      } else {
+        // Only if Supabase is not configured yet (first preview load), allow initial local session
+        setIsAuthenticated(true);
+        sessionStorage.setItem('subaithal_admin_auth', 'true');
       }
-
-      // 2. Owner access check (when running standalone or local storage)
-      setIsAuthenticated(true);
-      sessionStorage.setItem('subaithal_admin_auth', 'true');
     } catch (err: any) {
       setAuthError(err?.message || 'Authentication error.');
     } finally {
@@ -377,6 +404,33 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     if (result.success) {
       await onRefreshData();
       triggerSuccessCelebration();
+    }
+  };
+
+  // Local IndexedDB to Supabase Cloud Migration Handler
+  const handleMigrateLocalData = async () => {
+    setIsMigrating(true);
+    setMigrationStatus('Scanning local browser database...');
+    setMigrationResult(null);
+    try {
+      const res = await migrateLocalDataToSupabase((status) => {
+        setMigrationStatus(status);
+      });
+      setMigrationResult(res);
+      if (res.success) {
+        await onRefreshData();
+        triggerSuccessCelebration();
+      }
+    } catch (err: any) {
+      setMigrationResult({
+        success: false,
+        message: err?.message || 'Migration encountered an error.',
+        counts: { certificates: 0, projects: 0, experience: 0, internships: 0, events: 0, education: 0, skills: 0, achievements: 0 },
+        errors: [err?.message || 'Unknown error occurred during migration.'],
+      });
+    } finally {
+      setIsMigrating(false);
+      setMigrationStatus('');
     }
   };
 
@@ -497,7 +551,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
               </span>
             </div>
             <p className="text-xs text-[#85203F]">
-              Logged in as <strong>{authEmail}</strong>. All changes persist permanently.
+              Logged in as <strong>Subaithal</strong> ({authEmail}) • Cloud Synchronized
             </p>
           </div>
         </div>
@@ -539,6 +593,41 @@ export const AdminPage: React.FC<AdminPageProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Pending Local Data Sync Notification */}
+      {pendingSync.hasPending && (
+        <div className="bg-gradient-to-r from-rose-900 via-[#8F2547] to-rose-900 text-white p-4 sm:p-5 rounded-[22px] shadow-lg border border-rose-400/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-300">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-white/20 rounded-xl shrink-0 mt-0.5">
+              <Sparkles className="w-5 h-5 text-rose-200" />
+            </div>
+            <div>
+              <h4 className="font-heading font-extrabold text-sm sm:text-base text-white tracking-wide">
+                {pendingSync.total} Local Record{pendingSync.total > 1 ? 's' : ''} Ready for Cloud Sync
+              </h4>
+              <p className="text-xs text-rose-100/90 mt-1 leading-relaxed">
+                Found records saved in this browser ({pendingSync.breakdown.certificates ? `${pendingSync.breakdown.certificates} certificates` : ''}{pendingSync.breakdown.projects ? `, ${pendingSync.breakdown.projects} projects` : ''}) that are not yet stored in Supabase. Click to upload images and save records to the cloud.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={async () => {
+              await handleMigrateLocalData();
+              const updated = await getPendingLocalSyncCount();
+              setPendingSync(updated);
+            }}
+            disabled={isMigrating}
+            className="btn-rose-secondary px-5 py-2.5 rounded-full text-xs font-bold shrink-0 self-start sm:self-auto bg-white text-[#8F2547] hover:bg-rose-50 shadow-md cursor-pointer flex items-center gap-2"
+          >
+            {isMigrating ? (
+              <div className="w-3.5 h-3.5 border-2 border-[#8F2547] border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Cloud className="w-4 h-4 text-[#8F2547]" />
+            )}
+            <span>{isMigrating ? (migrationStatus || 'Syncing to Cloud...') : 'Sync to Cloud Now'}</span>
+          </button>
+        </div>
+      )}
 
       {/* Lifetime Access & Permanent Data Guarantee Banner */}
       <div className="p-3.5 bg-gradient-to-r from-emerald-500/15 via-pink-500/10 to-emerald-500/15 border border-emerald-600/30 rounded-2xl flex items-center justify-between gap-3 text-xs">
@@ -760,7 +849,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             <button
               onClick={() => {
                 setEditingProject({
-                  id: `proj_${Date.now()}`,
+                  id: ensureValidUuid(),
                   title: '',
                   summary: '',
                   techTags: [],
@@ -842,7 +931,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             <button
               onClick={() => {
                 setEditingCert({
-                  id: `cert_${Date.now()}`,
+                  id: ensureValidUuid(),
                   title: '',
                   issuer: '',
                   issueDate: '',
@@ -921,7 +1010,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             <button
               onClick={() => {
                 setEditingExp({
-                  id: `exp_${Date.now()}`,
+                  id: ensureValidUuid(),
                   organization: '',
                   role: '',
                   status: 'completed',
@@ -986,7 +1075,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             <button
               onClick={() => {
                 setEditingIntern({
-                  id: `intern_${Date.now()}`,
+                  id: ensureValidUuid(),
                   organization: '',
                   role: '',
                   status: 'completed',
@@ -1051,7 +1140,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             <button
               onClick={() => {
                 setEditingEvent({
-                  id: `event_${Date.now()}`,
+                  id: ensureValidUuid(),
                   title: '',
                   organizer: '',
                   date: '',
@@ -1118,7 +1207,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             <button
               onClick={() => {
                 setEditingEdu({
-                  id: `edu_${Date.now()}`,
+                  id: ensureValidUuid(),
                   college: '',
                   degree: '',
                   field: '',
@@ -1181,7 +1270,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             <button
               onClick={() => {
                 setEditingSkill({
-                  id: `skill_${Date.now()}`,
+                  id: ensureValidUuid(),
                   name: '',
                   category: 'Technical',
                   proficiency: 85,
@@ -1239,7 +1328,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             <button
               onClick={() => {
                 setEditingAch({
-                  id: `ach_${Date.now()}`,
+                  id: ensureValidUuid(),
                   title: '',
                   issuerOrEvent: '',
                   date: '',
@@ -1494,6 +1583,92 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             </div>
           </div>
 
+          {/* Migrate Local IndexedDB Data to Supabase */}
+          <div className="space-y-4 pt-4 border-t border-white/50">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="font-heading font-bold text-base text-[#3A0F05] flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#8F2547]" />
+                  <span>Migrate Local Browser Data to Supabase</span>
+                </h3>
+                <p className="text-xs text-[#4F2119]/80 leading-relaxed mt-1">
+                  If you previously uploaded certificates, projects, or images that were saved only in this browser's local storage (IndexedDB), this tool scans your local browser storage, converts any Base64 images to real files in the <code>portfolio-assets</code> bucket, and saves the records directly to your Supabase cloud tables.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handleMigrateLocalData}
+                disabled={isMigrating || !isSupabaseConfigured()}
+                className="btn-rose-gradient px-5 py-2.5 rounded-full text-xs font-semibold flex items-center gap-2 shadow-sm disabled:opacity-50"
+              >
+                {isMigrating ? (
+                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Cloud className="w-4 h-4" />
+                )}
+                <span>{isMigrating ? (migrationStatus || 'Migrating to Cloud...') : 'Sync Local Browser Records to Cloud'}</span>
+              </button>
+            </div>
+
+            {migrationResult && (
+              <div className={`p-4 rounded-2xl text-xs space-y-2.5 ${
+                migrationResult.success
+                  ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+                  : 'bg-amber-50 text-amber-900 border border-amber-200'
+              }`}>
+                <div className="flex items-center gap-2 font-semibold">
+                  {migrationResult.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  )}
+                  <span>{migrationResult.message}</span>
+                </div>
+
+                <div className="flex flex-wrap gap-2 text-[11px] pt-1">
+                  <span className="px-2.5 py-1 rounded-lg bg-white/70 border border-current font-medium">
+                    Certificates: {migrationResult.counts.certificates}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-white/70 border border-current font-medium">
+                    Projects: {migrationResult.counts.projects}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-white/70 border border-current font-medium">
+                    Experience: {migrationResult.counts.experience}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-white/70 border border-current font-medium">
+                    Internships: {migrationResult.counts.internships}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-white/70 border border-current font-medium">
+                    Events: {migrationResult.counts.events}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-white/70 border border-current font-medium">
+                    Education: {migrationResult.counts.education}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-white/70 border border-current font-medium">
+                    Skills: {migrationResult.counts.skills}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-white/70 border border-current font-medium">
+                    Achievements: {migrationResult.counts.achievements}
+                  </span>
+                </div>
+
+                {migrationResult.errors.length > 0 && (
+                  <div className="text-[11px] text-red-700 bg-red-100/60 p-2 rounded-xl space-y-1 mt-2">
+                    <span className="font-semibold block">Notice logs:</span>
+                    <ul className="list-disc pl-4 space-y-0.5">
+                      {migrationResult.errors.map((err, i) => (
+                        <li key={i}>{err}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Backup & Restore */}
           <div className="space-y-4 pt-4 border-t border-white/50">
             <h3 className="font-heading font-bold text-base text-[#3A0F05]">
@@ -1708,13 +1883,28 @@ export const AdminPage: React.FC<AdminPageProps> = ({
               {portfolioData.certificates.some(c => c.id === editingCert.id) ? 'Edit Certificate' : 'Add Certificate'}
             </h3>
 
+            {certModalError && (
+              <div className="p-3 bg-red-100 border border-red-300 text-red-700 text-xs rounded-xl flex items-start gap-2 mb-3">
+                <AlertCircle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+                <span>{certModalError}</span>
+              </div>
+            )}
+
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
-                await saveCertificate(editingCert);
-                setEditingCert(null);
-                await onRefreshData();
-                triggerSuccessCelebration();
+                setCertModalError(null);
+                setIsSavingCert(true);
+                try {
+                  await saveCertificate(editingCert);
+                  setEditingCert(null);
+                  await onRefreshData();
+                  triggerSuccessCelebration();
+                } catch (err: any) {
+                  setCertModalError(err?.message || 'Failed to save certificate to Supabase.');
+                } finally {
+                  setIsSavingCert(false);
+                }
               }}
               className="space-y-4"
             >
@@ -1816,11 +2006,23 @@ export const AdminPage: React.FC<AdminPageProps> = ({
               </div>
 
               <div className="pt-4 border-t border-white/50 flex items-center justify-end gap-2">
-                <button type="button" onClick={() => setEditingCert(null)} className="btn-rose-secondary px-4 py-2 rounded-full text-xs font-semibold">
+                <button 
+                  type="button" 
+                  disabled={isSavingCert}
+                  onClick={() => {
+                    setEditingCert(null);
+                    setCertModalError(null);
+                  }} 
+                  className="btn-rose-secondary px-4 py-2 rounded-full text-xs font-semibold cursor-pointer"
+                >
                   Cancel
                 </button>
-                <button type="submit" className="btn-rose-gradient px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider">
-                  Save Certificate
+                <button 
+                  type="submit" 
+                  disabled={isSavingCert}
+                  className="btn-rose-gradient px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider disabled:opacity-60 cursor-pointer flex items-center gap-1.5"
+                >
+                  {isSavingCert ? 'Saving to Cloud...' : 'Save Certificate'}
                 </button>
               </div>
             </form>
