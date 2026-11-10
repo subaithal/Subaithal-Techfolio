@@ -5,6 +5,8 @@ const STORAGE_KEY_ANON = 'subaithal_sb_anon';
 
 // Default Supabase project URL for Subaithal Techfolio
 export const DEFAULT_SUPABASE_URL = 'https://lopobdesxnqynmlpkppn.supabase.co';
+export const SUPABASE_PROJECT_ID = 'lopobdesxnqynmlpkppn';
+export const SUPABASE_SQL_EDITOR_URL = 'https://supabase.com/dashboard/project/lopobdesxnqynmlpkppn/sql/new';
 
 // Default to env vars if provided (Vercel / Vite), otherwise check stored config or default
 export function getSupabaseCredentials(): { url: string; anonKey: string } {
@@ -67,7 +69,18 @@ export function isSupabaseConfigured(): boolean {
   return Boolean(url && anonKey && url.startsWith('http'));
 }
 
-export async function testSupabaseConnection(): Promise<{ success: boolean; message: string }> {
+export async function reloadSupabaseSchemaCache(): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+  try {
+    const { error } = await client.rpc('pgrst_reload_schema');
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+export async function testSupabaseConnection(): Promise<{ success: boolean; needsSql?: boolean; message: string }> {
   const client = getSupabaseClient();
   if (!client) {
     return {
@@ -77,14 +90,15 @@ export async function testSupabaseConnection(): Promise<{ success: boolean; mess
   }
 
   try {
-    // Try querying a public table or checking auth status
+    // Try querying portfolio_profile to verify PostgREST schema cache
     const { error } = await client.from('portfolio_profile').select('id').limit(1);
     if (error) {
-      // If table doesn't exist yet, it's connected to Supabase project but tables need to be created
-      if (error.code === '42P01') {
+      // If table doesn't exist or is missing in schema cache
+      if (error.code === 'PGRST205' || error.code === '42P01' || error.message.includes('schema cache') || error.message.includes('does not exist')) {
         return {
-          success: true,
-          message: 'Connected to Supabase! (Tables not yet created, run the provided SQL in Supabase SQL Editor).',
+          success: false,
+          needsSql: true,
+          message: 'Connected to Supabase project, but database tables are not yet created in the schema cache (PGRST205). Run the SQL script in your Supabase SQL Editor to create them.',
         };
       }
       return {
@@ -528,5 +542,20 @@ CREATE POLICY "Only subaithalnowfie can delete portfolio assets" ON storage.obje
     bucket_id = 'portfolio-assets'
     AND (LOWER(COALESCE(auth.jwt() ->> 'email', '')) = 'subaithalnowfie@gmail.com')
   );
+
+-- ============================================================
+-- 7. POSTGREST SCHEMA CACHE RELOAD & RPC HELPER
+-- ============================================================
+-- Automatically reloads PostgREST schema cache so new tables are instantly recognized (Fixes PGRST205)
+NOTIFY pgrst, 'reload schema';
+
+-- Create reload RPC helper function
+CREATE OR REPLACE FUNCTION public.pgrst_reload_schema()
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  NOTIFY pgrst, 'reload schema';
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.pgrst_reload_schema() TO anon, authenticated;
 `;
 

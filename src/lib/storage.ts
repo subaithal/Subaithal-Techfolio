@@ -12,7 +12,7 @@ import {
   ResumeData, 
   SiteSettings 
 } from '../types/portfolio';
-import { getSupabaseClient, isSupabaseConfigured, uploadFileToSupabase } from './supabase';
+import { getSupabaseClient, isSupabaseConfigured, uploadFileToSupabase, reloadSupabaseSchemaCache } from './supabase';
 import { getIdbItem, setIdbItem } from './idb';
 
 const LOCAL_STORAGE_KEY = 'subaithal_portfolio_v1';
@@ -70,6 +70,31 @@ export function ensureValidUuid(id?: string): string {
 }
 
 /**
+ * Checks whether a given table exists in PostgREST schema cache.
+ */
+export async function checkTableExists(tableName: string): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+  try {
+    const { error } = await client.from(tableName).select('id').limit(1);
+    if (!error) return true;
+    if (
+      error.code === 'PGRST205' || 
+      error.code === '42P01' || 
+      error.message?.includes('schema cache') || 
+      error.message?.includes('does not exist') ||
+      error.message?.includes('relation')
+    ) {
+      return false;
+    }
+    // Any other error (permission, RLS, empty) indicates the table exists in schema cache
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Translates PostgreSQL and Supabase errors into human-friendly explanations.
  */
 export function formatSupabaseError(error: any, context = 'record'): string {
@@ -77,11 +102,18 @@ export function formatSupabaseError(error: any, context = 'record'): string {
   const msg = error.message || String(error);
   const code = error.code || '';
 
-  if (code === '42P01' || msg.includes('does not exist') || msg.includes('relation')) {
-    return `Database table is missing for ${context}. In Supabase Dashboard, create the table or run the setup schema. (Error 42P01: Table missing)`;
+  if (
+    code === 'PGRST205' || 
+    msg.includes('PGRST205') || 
+    msg.includes('schema cache') || 
+    code === '42P01' || 
+    msg.includes('does not exist') || 
+    msg.includes('relation')
+  ) {
+    return `Database table is missing for ${context} in Supabase (PGRST205: Not found in schema cache). Run the SQL script in your Supabase SQL Editor to create all tables and reload schema cache.`;
   }
   if (code === '42501' || msg.includes('permission denied')) {
-    return `Permission denied for ${context}. Ensure table permissions are granted to PostgREST roles. (Error 42501)`;
+    return `Permission denied for ${context}. Ensure PostgREST table permissions (GRANT) and RLS policies are applied. (Error 42501)`;
   }
   if (msg.includes('row-level security') || msg.includes('violates row-level security')) {
     return `Security Policy Blocked: Only subaithalnowfie@gmail.com is authorized to modify ${context}.`;
@@ -95,7 +127,7 @@ export function formatSupabaseError(error: any, context = 'record'): string {
   return `Supabase error (${code || 'error'}): ${msg}`;
 }
 
-// In-memory cache for instant UI responsiveness
+// In-memory state cache for real-time React UI updates across components
 let stateCache: FullPortfolioData = { ...INITIAL_PORTFOLIO_DATA };
 let isInitialized = false;
 
@@ -116,51 +148,16 @@ function notifyListeners() {
 
 /**
  * Load portfolio data:
- * When Supabase is configured, Supabase is the authoritative source of truth.
- * IndexedDB/LocalStorage serves only as a read-through cache for instant initial painting.
+ * Pure cloud-authoritative architecture.
+ * Fetches live data directly from Supabase Cloud tables for every visitor and device.
+ * Eliminates device-bound localStorage/IndexedDB fallback.
  */
 export async function loadPortfolioData(forceRefresh = false): Promise<FullPortfolioData> {
   if (isInitialized && !forceRefresh) {
     return stateCache;
   }
 
-  // 1. Initial optimistic read from local cache (IndexedDB)
-  try {
-    const idbData = await getIdbItem<FullPortfolioData>();
-    if (idbData && idbData.profile) {
-      stateCache = {
-        ...INITIAL_PORTFOLIO_DATA,
-        ...idbData,
-        profile: {
-          ...INITIAL_PORTFOLIO_DATA.profile,
-          ...(idbData.profile || {}),
-          name: idbData.profile?.name || INITIAL_PORTFOLIO_DATA.profile.name,
-          linkedIn: idbData.profile?.linkedIn || INITIAL_PORTFOLIO_DATA.profile.linkedIn,
-          gitHub: idbData.profile?.gitHub || INITIAL_PORTFOLIO_DATA.profile.gitHub,
-        },
-      };
-    } else {
-      const raw = typeof window !== 'undefined' ? localStorage.getItem(LOCAL_STORAGE_KEY) : null;
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        stateCache = {
-          ...INITIAL_PORTFOLIO_DATA,
-          ...parsed,
-          profile: {
-            ...INITIAL_PORTFOLIO_DATA.profile,
-            ...(parsed.profile || {}),
-            name: parsed.profile?.name || INITIAL_PORTFOLIO_DATA.profile.name,
-            linkedIn: parsed.profile?.linkedIn || INITIAL_PORTFOLIO_DATA.profile.linkedIn,
-            gitHub: parsed.profile?.gitHub || INITIAL_PORTFOLIO_DATA.profile.gitHub,
-          },
-        };
-      }
-    }
-  } catch (e) {
-    console.warn('Local cache read note:', e);
-  }
-
-  // 2. Fetch authoritative data from Supabase Cloud (Parallel concurrent queries)
+  // Pure cloud-authoritative fetch directly from Supabase
   if (isSupabaseConfigured()) {
     try {
       const client = getSupabaseClient();
@@ -225,7 +222,7 @@ export async function loadPortfolioData(forceRefresh = false): Promise<FullPortf
           }));
         }
 
-        // Sync Certificates (Full multi-image support + public storage URLs)
+        // Sync Certificates (Cloud public storage URLs + multi-image support)
         if (certsRes.data) {
           stateCache.certificates = certsRes.data.map((r: any) => {
             const rawImages = Array.isArray(r.images)
@@ -388,656 +385,646 @@ export async function loadPortfolioData(forceRefresh = false): Promise<FullPortf
         }
       }
     } catch (err) {
-      console.warn('Supabase cloud fetch warning:', err);
+      console.warn('Supabase cloud fetch note:', err);
     }
+  } else {
+    console.warn('[Supabase] Supabase credentials not yet detected. Provide VITE_SUPABASE_ANON_KEY in Vercel or Admin Settings to load cloud data.');
   }
 
   isInitialized = true;
-  await persistDataLocally(stateCache);
   notifyListeners();
   return stateCache;
 }
 
 /**
- * Cache mirror only (keeps an offline copy, never replaces cloud authority)
+ * Updates in-memory portfolio state and notifies subscribers.
+ * Does not write to browser localStorage/IndexedDB.
  */
-async function persistDataLocally(data: FullPortfolioData) {
-  try {
-    await setIdbItem('full_portfolio_data', data);
-    try {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
-      }
-    } catch {
-      // quota safeguard
-    }
-  } catch (err) {
-    console.error('Local mirror cache write error:', err);
-  }
-}
-
 export async function savePortfolioData(updated: FullPortfolioData): Promise<{ success: boolean; error?: string }> {
   stateCache = { ...updated };
-  await persistDataLocally(stateCache);
   notifyListeners();
   return { success: true };
 }
 
 // -------------------------------------------------------------
-// PROFILE & SETTINGS OPERATIONS
+// PROFILE & SETTINGS OPERATIONS (Cloud-Only Persistence)
 // -------------------------------------------------------------
 export async function updateProfile(profile: ProfileData): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const payload = {
-        name: profile.name,
-        photo_url: profile.photoUrl || null,
-        short_intro: profile.shortIntro || null,
-        about_text: profile.aboutText || null,
-        education_summary: profile.educationSummary || null,
-        location: profile.location || null,
-        email: profile.email || 'subaithalnowfie@gmail.com',
-        linkedin: profile.linkedIn || 'https://www.linkedin.com/in/subaithal-s-812584426',
-        github: profile.gitHub || 'https://github.com/Subaithals',
-        updated_at: new Date().toISOString(),
-      };
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured. Profile changes must be saved to Supabase to be visible across devices.');
+  }
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
 
-      const { data: existing } = await client.from('portfolio_profile').select('id').limit(1).maybeSingle();
-      if (existing?.id) {
-        const { error } = await client.from('portfolio_profile').update(payload).eq('id', existing.id);
-        if (error) throw new Error(`Failed to update profile: ${error.message}`);
-      } else {
-        const { error } = await client.from('portfolio_profile').insert(payload);
-        if (error) throw new Error(`Failed to save profile: ${error.message}`);
-      }
-    }
+  const payload = {
+    name: profile.name,
+    photo_url: profile.photoUrl || null,
+    short_intro: profile.shortIntro || null,
+    about_text: profile.aboutText || null,
+    education_summary: profile.educationSummary || null,
+    location: profile.location || null,
+    email: profile.email || 'subaithalnowfie@gmail.com',
+    linkedin: profile.linkedIn || 'https://www.linkedin.com/in/subaithal-s-812584426',
+    github: profile.gitHub || 'https://github.com/Subaithals',
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data: existing, error: fetchErr } = await client.from('portfolio_profile').select('id').limit(1).maybeSingle();
+  if (fetchErr) throw new Error(formatSupabaseError(fetchErr, 'profile'));
+
+  if (existing?.id) {
+    const { error } = await client.from('portfolio_profile').update(payload).eq('id', existing.id);
+    if (error) throw new Error(formatSupabaseError(error, 'profile'));
+  } else {
+    const { error } = await client.from('portfolio_profile').insert(payload);
+    if (error) throw new Error(formatSupabaseError(error, 'profile'));
   }
 
-  const current = await loadPortfolioData();
-  current.profile = profile;
-  await savePortfolioData(current);
+  stateCache.profile = { ...profile };
+  notifyListeners();
 }
 
 export async function saveSettings(settings: SiteSettings): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const payload = {
-        hidden_sections: settings.hiddenSections || {},
-        contact_email: settings.contactEmail || 'subaithalnowfie@gmail.com',
-        contact_note: settings.contactNote || '',
-        updated_at: new Date().toISOString(),
-      };
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured. Settings must be saved to Supabase to sync across devices.');
+  }
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
 
-      const { data: existing } = await client.from('portfolio_settings').select('id').limit(1).maybeSingle();
-      if (existing?.id) {
-        const { error } = await client.from('portfolio_settings').update(payload).eq('id', existing.id);
-        if (error) throw new Error(`Failed to update settings: ${error.message}`);
-      } else {
-        const { error } = await client.from('portfolio_settings').insert(payload);
-        if (error) throw new Error(`Failed to save settings: ${error.message}`);
-      }
-    }
+  const payload = {
+    hidden_sections: settings.hiddenSections || {},
+    contact_email: settings.contactEmail || 'subaithalnowfie@gmail.com',
+    contact_note: settings.contactNote || '',
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data: existing, error: fetchErr } = await client.from('portfolio_settings').select('id').limit(1).maybeSingle();
+  if (fetchErr) throw new Error(formatSupabaseError(fetchErr, 'settings'));
+
+  if (existing?.id) {
+    const { error } = await client.from('portfolio_settings').update(payload).eq('id', existing.id);
+    if (error) throw new Error(formatSupabaseError(error, 'settings'));
+  } else {
+    const { error } = await client.from('portfolio_settings').insert(payload);
+    if (error) throw new Error(formatSupabaseError(error, 'settings'));
   }
 
-  const current = await loadPortfolioData();
-  current.settings = settings;
-  await savePortfolioData(current);
+  stateCache.settings = { ...settings };
+  notifyListeners();
 }
 
 // -------------------------------------------------------------
 // CERTIFICATES (Strict Cloud Persistence in portfolio_certificates)
 // -------------------------------------------------------------
 export async function saveCertificate(item: CertificateItem): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase connection required. Certificates must be saved to Supabase Cloud so all visitors can view them on any device.');
+  }
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
   const validId = ensureValidUuid(item.id);
-  let savedItem = { ...item, id: validId };
+  const allImages = Array.isArray(item.images)
+    ? item.images.filter(Boolean)
+    : (typeof item.images === 'string' && item.images ? [item.images] : []);
 
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (!client) throw new Error('Supabase client is not available.');
-
-    const allImages = Array.isArray(item.images)
-      ? item.images.filter(Boolean)
-      : (typeof item.images === 'string' && item.images ? [item.images] : []);
-
-    if (item.fileUrl && !allImages.includes(item.fileUrl)) {
-      allImages.unshift(item.fileUrl);
-    }
-
-    const primaryUrl = item.fileUrl || allImages[0] || null;
-
-    const payload: any = {
-      id: validId,
-      title: item.title,
-      issuer: item.issuer,
-      issue_date: item.issueDate,
-      expiry_date: item.expiryDate || null,
-      credential_id: item.credentialId || null,
-      verify_link: item.verifyLink || null,
-      file_url: primaryUrl,
-      images: allImages,
-      file_type: item.fileType || 'image',
-      description: item.description || '',
-      published: item.published ?? true,
-      created_at: item.createdAt || new Date().toISOString(),
-    };
-
-    const { data, error } = await client
-      .from('portfolio_certificates')
-      .upsert(payload, { onConflict: 'id' })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Supabase certificate upsert error:', error);
-      throw new Error(formatSupabaseError(error, 'certificate'));
-    } else if (data && data.id) {
-      savedItem.id = data.id;
-      savedItem.fileUrl = data.file_url || primaryUrl || '';
-      savedItem.images = Array.isArray(data.images) && data.images.length > 0 ? data.images : allImages;
-    }
+  if (item.fileUrl && !allImages.includes(item.fileUrl)) {
+    allImages.unshift(item.fileUrl);
   }
 
-  const current = await loadPortfolioData();
-  const index = current.certificates.findIndex(c => c.id === item.id || c.id === savedItem.id);
+  const primaryUrl = item.fileUrl || allImages[0] || null;
+
+  const payload: any = {
+    id: validId,
+    title: item.title,
+    issuer: item.issuer,
+    issue_date: item.issueDate,
+    expiry_date: item.expiryDate || null,
+    credential_id: item.credentialId || null,
+    verify_link: item.verifyLink || null,
+    file_url: primaryUrl,
+    images: allImages,
+    file_type: item.fileType || 'image',
+    description: item.description || '',
+    published: item.published ?? true,
+    created_at: item.createdAt || new Date().toISOString(),
+  };
+
+  const { data, error } = await client
+    .from('portfolio_certificates')
+    .upsert(payload, { onConflict: 'id' })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Supabase certificate upsert error:', error);
+    throw new Error(formatSupabaseError(error, 'certificate'));
+  }
+
+  const savedItem: CertificateItem = {
+    ...item,
+    id: data?.id || validId,
+    fileUrl: data?.file_url || primaryUrl || '',
+    images: Array.isArray(data?.images) && data.images.length > 0 ? data.images : allImages,
+    createdAt: data?.created_at || payload.created_at,
+  };
+
+  const index = stateCache.certificates.findIndex(c => c.id === item.id || c.id === savedItem.id);
   if (index >= 0) {
-    current.certificates[index] = savedItem;
+    stateCache.certificates[index] = savedItem;
   } else {
-    current.certificates.unshift(savedItem);
+    stateCache.certificates.unshift(savedItem);
   }
-  await savePortfolioData(current);
+  notifyListeners();
 }
 
 export async function deleteCertificate(id: string): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-      if (isUuid) {
-        const { error } = await client.from('portfolio_certificates').delete().eq('id', id);
-        if (error) {
-          console.error('Supabase delete certificate error:', error);
-          throw new Error(formatSupabaseError(error, 'certificate'));
-        }
-      }
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase connection required to delete certificate from cloud.');
+  }
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  if (isUuid) {
+    const { error } = await client.from('portfolio_certificates').delete().eq('id', id);
+    if (error) {
+      console.error('Supabase delete certificate error:', error);
+      throw new Error(formatSupabaseError(error, 'certificate'));
     }
   }
 
-  const current = await loadPortfolioData();
-  current.certificates = current.certificates.filter(c => c.id !== id);
-  await savePortfolioData(current);
+  stateCache.certificates = stateCache.certificates.filter(c => c.id !== id);
+  notifyListeners();
 }
 
 // -------------------------------------------------------------
 // PROJECTS (portfolio_projects)
 // -------------------------------------------------------------
 export async function saveProject(project: ProjectItem): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase connection required. Projects must be saved directly to Supabase Cloud.');
+  }
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
   const validId = ensureValidUuid(project.id);
-  let savedProject = { ...project, id: validId };
+  const payload: any = {
+    id: validId,
+    title: project.title,
+    summary: project.summary,
+    tech_tags: project.techTags || [],
+    github_link: project.gitHubLink || null,
+    live_demo_link: project.liveDemoLink || null,
+    thumbnail_url: project.thumbnailUrl || (project.screenshots && project.screenshots[0]) || null,
+    screenshots: project.screenshots || [],
+    features: project.features || [],
+    status: project.status || 'Completed',
+    published: project.published ?? true,
+    created_at: project.createdAt || new Date().toISOString(),
+  };
 
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const payload: any = {
-        id: validId,
-        title: project.title,
-        summary: project.summary,
-        tech_tags: project.techTags || [],
-        github_link: project.gitHubLink || null,
-        live_demo_link: project.liveDemoLink || null,
-        thumbnail_url: project.thumbnailUrl || (project.screenshots && project.screenshots[0]) || null,
-        screenshots: project.screenshots || [],
-        features: project.features || [],
-        status: project.status || 'Completed',
-        published: project.published ?? true,
-        created_at: project.createdAt || new Date().toISOString(),
-      };
+  const { data, error } = await client
+    .from('portfolio_projects')
+    .upsert(payload, { onConflict: 'id' })
+    .select()
+    .single();
 
-      const { data, error } = await client
-        .from('portfolio_projects')
-        .upsert(payload, { onConflict: 'id' })
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Supabase project upsert error:', error);
-        throw new Error(formatSupabaseError(error, 'project'));
-      } else if (data && data.id) {
-        savedProject.id = data.id;
-      }
-    }
+  if (error) {
+    console.error('Supabase project upsert error:', error);
+    throw new Error(formatSupabaseError(error, 'project'));
   }
 
-  const current = await loadPortfolioData();
-  const index = current.projects.findIndex(p => p.id === project.id || p.id === savedProject.id);
+  const savedProject: ProjectItem = {
+    ...project,
+    id: data?.id || validId,
+    thumbnailUrl: data?.thumbnail_url || payload.thumbnail_url,
+    screenshots: Array.isArray(data?.screenshots) ? data.screenshots : payload.screenshots,
+    createdAt: data?.created_at || payload.created_at,
+  };
+
+  const index = stateCache.projects.findIndex(p => p.id === project.id || p.id === savedProject.id);
   if (index >= 0) {
-    current.projects[index] = savedProject;
+    stateCache.projects[index] = savedProject;
   } else {
-    current.projects.unshift(savedProject);
+    stateCache.projects.unshift(savedProject);
   }
-  await savePortfolioData(current);
+  notifyListeners();
 }
 
 export async function deleteProject(id: string): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-      if (isUuid) {
-        const { error } = await client.from('portfolio_projects').delete().eq('id', id);
-        if (error) throw new Error(formatSupabaseError(error, 'project'));
-      }
-    }
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase connection required to delete project from cloud.');
+  }
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  if (isUuid) {
+    const { error } = await client.from('portfolio_projects').delete().eq('id', id);
+    if (error) throw new Error(formatSupabaseError(error, 'project'));
   }
 
-  const current = await loadPortfolioData();
-  current.projects = current.projects.filter(p => p.id !== id);
-  await savePortfolioData(current);
+  stateCache.projects = stateCache.projects.filter(p => p.id !== id);
+  notifyListeners();
 }
 
 // -------------------------------------------------------------
 // EXPERIENCE (portfolio_experience)
 // -------------------------------------------------------------
 export async function saveExperience(item: ExperienceItem): Promise<void> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase connection required to save experience.');
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
   const validId = ensureValidUuid(item.id);
-  let savedItem = { ...item, id: validId };
+  const payload: any = {
+    id: validId,
+    organization: item.organization,
+    role: item.role,
+    status: item.status,
+    start_date: item.startDate,
+    end_date: item.endDate || null,
+    is_current: item.isCurrent ?? false,
+    location: item.location || null,
+    description: item.description,
+    offer_letter_url: item.offerLetterUrl || null,
+    completion_cert_url: item.completionCertUrl || null,
+    published: item.published ?? true,
+    created_at: item.createdAt || new Date().toISOString(),
+  };
 
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const payload: any = {
-        id: validId,
-        organization: item.organization,
-        role: item.role,
-        status: item.status,
-        start_date: item.startDate,
-        end_date: item.endDate || null,
-        is_current: item.isCurrent ?? false,
-        location: item.location || null,
-        description: item.description,
-        offer_letter_url: item.offerLetterUrl || null,
-        completion_cert_url: item.completionCertUrl || null,
-        published: item.published ?? true,
-        created_at: item.createdAt || new Date().toISOString(),
-      };
+  const { data, error } = await client
+    .from('portfolio_experience')
+    .upsert(payload, { onConflict: 'id' })
+    .select()
+    .single();
 
-      const { data, error } = await client
-        .from('portfolio_experience')
-        .upsert(payload, { onConflict: 'id' })
-        .select()
-        .single();
+  if (error) throw new Error(formatSupabaseError(error, 'experience'));
 
-      if (error) throw new Error(formatSupabaseError(error, 'experience'));
-      if (data?.id) savedItem.id = data.id;
-    }
-  }
+  const savedItem: ExperienceItem = {
+    ...item,
+    id: data?.id || validId,
+    createdAt: data?.created_at || payload.created_at,
+  };
 
-  const current = await loadPortfolioData();
-  const index = current.experience.findIndex(e => e.id === item.id || e.id === savedItem.id);
+  const index = stateCache.experience.findIndex(e => e.id === item.id || e.id === savedItem.id);
   if (index >= 0) {
-    current.experience[index] = savedItem;
+    stateCache.experience[index] = savedItem;
   } else {
-    current.experience.unshift(savedItem);
+    stateCache.experience.unshift(savedItem);
   }
-  await savePortfolioData(current);
+  notifyListeners();
 }
 
 export async function deleteExperience(id: string): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-      if (isUuid) {
-        const { error } = await client.from('portfolio_experience').delete().eq('id', id);
-        if (error) throw new Error(formatSupabaseError(error, 'experience'));
-      }
-    }
+  if (!isSupabaseConfigured()) throw new Error('Supabase connection required to delete experience.');
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  if (isUuid) {
+    const { error } = await client.from('portfolio_experience').delete().eq('id', id);
+    if (error) throw new Error(formatSupabaseError(error, 'experience'));
   }
 
-  const current = await loadPortfolioData();
-  current.experience = current.experience.filter(e => e.id !== id);
-  await savePortfolioData(current);
+  stateCache.experience = stateCache.experience.filter(e => e.id !== id);
+  notifyListeners();
 }
 
 // -------------------------------------------------------------
 // INTERNSHIPS (portfolio_internships)
 // -------------------------------------------------------------
 export async function saveInternship(item: InternshipItem): Promise<void> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase connection required to save internship.');
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
   const validId = ensureValidUuid(item.id);
-  let savedItem = { ...item, id: validId };
+  const payload: any = {
+    id: validId,
+    organization: item.organization,
+    role: item.role,
+    status: item.status,
+    start_date: item.startDate,
+    end_date: item.endDate || null,
+    is_current: item.isCurrent ?? false,
+    location: item.location || null,
+    description: item.description,
+    offer_letter_url: item.offerLetterUrl || null,
+    completion_cert_url: item.completionCertUrl || null,
+    published: item.published ?? true,
+    created_at: item.createdAt || new Date().toISOString(),
+  };
 
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const payload: any = {
-        id: validId,
-        organization: item.organization,
-        role: item.role,
-        status: item.status,
-        start_date: item.startDate,
-        end_date: item.endDate || null,
-        is_current: item.isCurrent ?? false,
-        location: item.location || null,
-        description: item.description,
-        offer_letter_url: item.offerLetterUrl || null,
-        completion_cert_url: item.completionCertUrl || null,
-        published: item.published ?? true,
-        created_at: item.createdAt || new Date().toISOString(),
-      };
+  const { data, error } = await client
+    .from('portfolio_internships')
+    .upsert(payload, { onConflict: 'id' })
+    .select()
+    .single();
 
-      const { data, error } = await client
-        .from('portfolio_internships')
-        .upsert(payload, { onConflict: 'id' })
-        .select()
-        .single();
+  if (error) throw new Error(formatSupabaseError(error, 'internship'));
 
-      if (error) throw new Error(formatSupabaseError(error, 'internship'));
-      if (data?.id) savedItem.id = data.id;
-    }
-  }
+  const savedItem: InternshipItem = {
+    ...item,
+    id: data?.id || validId,
+    createdAt: data?.created_at || payload.created_at,
+  };
 
-  const current = await loadPortfolioData();
-  const index = current.internships.findIndex(i => i.id === item.id || i.id === savedItem.id);
+  const index = stateCache.internships.findIndex(i => i.id === item.id || i.id === savedItem.id);
   if (index >= 0) {
-    current.internships[index] = savedItem;
+    stateCache.internships[index] = savedItem;
   } else {
-    current.internships.unshift(savedItem);
+    stateCache.internships.unshift(savedItem);
   }
-  await savePortfolioData(current);
+  notifyListeners();
 }
 
 export async function deleteInternship(id: string): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-      if (isUuid) {
-        const { error } = await client.from('portfolio_internships').delete().eq('id', id);
-        if (error) throw new Error(formatSupabaseError(error, 'internship'));
-      }
-    }
+  if (!isSupabaseConfigured()) throw new Error('Supabase connection required to delete internship.');
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  if (isUuid) {
+    const { error } = await client.from('portfolio_internships').delete().eq('id', id);
+    if (error) throw new Error(formatSupabaseError(error, 'internship'));
   }
 
-  const current = await loadPortfolioData();
-  current.internships = current.internships.filter(i => i.id !== id);
-  await savePortfolioData(current);
+  stateCache.internships = stateCache.internships.filter(i => i.id !== id);
+  notifyListeners();
 }
 
 // -------------------------------------------------------------
 // EVENTS (portfolio_events)
 // -------------------------------------------------------------
 export async function saveEvent(item: EventItem): Promise<void> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase connection required to save event.');
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
   const validId = ensureValidUuid(item.id);
-  let savedItem = { ...item, id: validId };
+  const payload: any = {
+    id: validId,
+    title: item.title,
+    organizer: item.organizer || '',
+    date: item.date || '',
+    location: item.location || '',
+    participation_status: item.participationStatus || 'Participant',
+    poster_url: item.posterUrl || (item.photos && item.photos[0]) || null,
+    photos: item.photos || [],
+    certificate_url: item.certificateUrl || null,
+    description: item.description || '',
+    published: item.published ?? true,
+    created_at: item.createdAt || new Date().toISOString(),
+  };
 
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const payload: any = {
-        id: validId,
-        title: item.title,
-        organizer: item.organizer || '',
-        date: item.date || '',
-        location: item.location || '',
-        participation_status: item.participationStatus || 'Attended',
-        poster_url: item.posterUrl || (item.photos && item.photos[0]) || null,
-        photos: item.photos || [],
-        certificate_url: item.certificateUrl || null,
-        description: item.description || '',
-        published: item.published ?? true,
-        created_at: item.createdAt || new Date().toISOString(),
-      };
+  const { data, error } = await client
+    .from('portfolio_events')
+    .upsert(payload, { onConflict: 'id' })
+    .select()
+    .single();
 
-      const { data, error } = await client
-        .from('portfolio_events')
-        .upsert(payload, { onConflict: 'id' })
-        .select()
-        .single();
+  if (error) throw new Error(formatSupabaseError(error, 'event'));
 
-      if (error) throw new Error(formatSupabaseError(error, 'event'));
-      if (data?.id) savedItem.id = data.id;
-    }
-  }
+  const savedItem: EventItem = {
+    ...item,
+    id: data?.id || validId,
+    createdAt: data?.created_at || payload.created_at,
+  };
 
-  const current = await loadPortfolioData();
-  const index = current.events.findIndex(e => e.id === item.id || e.id === savedItem.id);
+  const index = stateCache.events.findIndex(e => e.id === item.id || e.id === savedItem.id);
   if (index >= 0) {
-    current.events[index] = savedItem;
+    stateCache.events[index] = savedItem;
   } else {
-    current.events.unshift(savedItem);
+    stateCache.events.unshift(savedItem);
   }
-  await savePortfolioData(current);
+  notifyListeners();
 }
 
 export async function deleteEvent(id: string): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-      if (isUuid) {
-        const { error } = await client.from('portfolio_events').delete().eq('id', id);
-        if (error) throw new Error(formatSupabaseError(error, 'event'));
-      }
-    }
+  if (!isSupabaseConfigured()) throw new Error('Supabase connection required to delete event.');
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  if (isUuid) {
+    const { error } = await client.from('portfolio_events').delete().eq('id', id);
+    if (error) throw new Error(formatSupabaseError(error, 'event'));
   }
 
-  const current = await loadPortfolioData();
-  current.events = current.events.filter(e => e.id !== id);
-  await savePortfolioData(current);
+  stateCache.events = stateCache.events.filter(e => e.id !== id);
+  notifyListeners();
 }
 
 // -------------------------------------------------------------
 // EDUCATION (portfolio_education)
 // -------------------------------------------------------------
 export async function saveEducation(item: EducationItem): Promise<void> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase connection required to save education.');
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
   const validId = ensureValidUuid(item.id);
-  let savedItem = { ...item, id: validId };
+  const payload: any = {
+    id: validId,
+    college: item.college,
+    degree: item.degree,
+    field: item.field,
+    start_year: item.startYear,
+    end_year: item.endYear,
+    grade: item.grade || null,
+    place: item.place || null,
+    notes: item.notes || null,
+    published: item.published ?? true,
+    created_at: item.createdAt || new Date().toISOString(),
+  };
 
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const payload: any = {
-        id: validId,
-        college: item.college,
-        degree: item.degree,
-        field: item.field,
-        start_year: item.startYear,
-        end_year: item.endYear,
-        grade: item.grade || null,
-        place: item.place || null,
-        notes: item.notes || null,
-        published: item.published ?? true,
-        created_at: item.createdAt || new Date().toISOString(),
-      };
+  const { data, error } = await client
+    .from('portfolio_education')
+    .upsert(payload, { onConflict: 'id' })
+    .select()
+    .single();
 
-      const { data, error } = await client
-        .from('portfolio_education')
-        .upsert(payload, { onConflict: 'id' })
-        .select()
-        .single();
+  if (error) throw new Error(formatSupabaseError(error, 'education'));
 
-      if (error) throw new Error(formatSupabaseError(error, 'education'));
-      if (data?.id) savedItem.id = data.id;
-    }
-  }
+  const savedItem: EducationItem = {
+    ...item,
+    id: data?.id || validId,
+    createdAt: data?.created_at || payload.created_at,
+  };
 
-  const current = await loadPortfolioData();
-  const index = current.education.findIndex(e => e.id === item.id || e.id === savedItem.id);
+  const index = stateCache.education.findIndex(e => e.id === item.id || e.id === savedItem.id);
   if (index >= 0) {
-    current.education[index] = savedItem;
+    stateCache.education[index] = savedItem;
   } else {
-    current.education.unshift(savedItem);
+    stateCache.education.unshift(savedItem);
   }
-  await savePortfolioData(current);
+  notifyListeners();
 }
 
 export async function deleteEducation(id: string): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-      if (isUuid) {
-        const { error } = await client.from('portfolio_education').delete().eq('id', id);
-        if (error) throw new Error(formatSupabaseError(error, 'education'));
-      }
-    }
+  if (!isSupabaseConfigured()) throw new Error('Supabase connection required to delete education.');
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  if (isUuid) {
+    const { error } = await client.from('portfolio_education').delete().eq('id', id);
+    if (error) throw new Error(formatSupabaseError(error, 'education'));
   }
 
-  const current = await loadPortfolioData();
-  current.education = current.education.filter(e => e.id !== id);
-  await savePortfolioData(current);
+  stateCache.education = stateCache.education.filter(e => e.id !== id);
+  notifyListeners();
 }
 
 // -------------------------------------------------------------
 // SKILLS (portfolio_skills)
 // -------------------------------------------------------------
 export async function saveSkill(item: SkillItem): Promise<void> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase connection required to save skill.');
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
   const validId = ensureValidUuid(item.id);
-  let savedItem = { ...item, id: validId };
+  const payload: any = {
+    id: validId,
+    name: item.name,
+    category: item.category,
+    proficiency: item.proficiency || 85,
+    notes: item.notes || null,
+    published: item.published ?? true,
+    created_at: item.createdAt || new Date().toISOString(),
+  };
 
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const payload: any = {
-        id: validId,
-        name: item.name,
-        category: item.category,
-        proficiency: item.proficiency || 85,
-        notes: item.notes || null,
-        published: item.published ?? true,
-        created_at: item.createdAt || new Date().toISOString(),
-      };
+  const { data, error } = await client
+    .from('portfolio_skills')
+    .upsert(payload, { onConflict: 'id' })
+    .select()
+    .single();
 
-      const { data, error } = await client
-        .from('portfolio_skills')
-        .upsert(payload, { onConflict: 'id' })
-        .select()
-        .single();
+  if (error) throw new Error(formatSupabaseError(error, 'skill'));
 
-      if (error) throw new Error(formatSupabaseError(error, 'skill'));
-      if (data?.id) savedItem.id = data.id;
-    }
-  }
+  const savedItem: SkillItem = {
+    ...item,
+    id: data?.id || validId,
+    createdAt: data?.created_at || payload.created_at,
+  };
 
-  const current = await loadPortfolioData();
-  const index = current.skills.findIndex(s => s.id === item.id || s.id === savedItem.id);
+  const index = stateCache.skills.findIndex(s => s.id === item.id || s.id === savedItem.id);
   if (index >= 0) {
-    current.skills[index] = savedItem;
+    stateCache.skills[index] = savedItem;
   } else {
-    current.skills.unshift(savedItem);
+    stateCache.skills.unshift(savedItem);
   }
-  await savePortfolioData(current);
+  notifyListeners();
 }
 
 export async function deleteSkill(id: string): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-      if (isUuid) {
-        const { error } = await client.from('portfolio_skills').delete().eq('id', id);
-        if (error) throw new Error(formatSupabaseError(error, 'skill'));
-      }
-    }
+  if (!isSupabaseConfigured()) throw new Error('Supabase connection required to delete skill.');
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  if (isUuid) {
+    const { error } = await client.from('portfolio_skills').delete().eq('id', id);
+    if (error) throw new Error(formatSupabaseError(error, 'skill'));
   }
 
-  const current = await loadPortfolioData();
-  current.skills = current.skills.filter(s => s.id !== id);
-  await savePortfolioData(current);
+  stateCache.skills = stateCache.skills.filter(s => s.id !== id);
+  notifyListeners();
 }
 
 // -------------------------------------------------------------
 // ACHIEVEMENTS (portfolio_achievements)
 // -------------------------------------------------------------
 export async function saveAchievement(item: AchievementItem): Promise<void> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase connection required to save achievement.');
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
   const validId = ensureValidUuid(item.id);
-  let savedItem = { ...item, id: validId };
+  const payload: any = {
+    id: validId,
+    title: item.title,
+    issuer_or_event: item.issuerOrEvent,
+    date: item.date,
+    description: item.description,
+    rank_or_award: item.rankOrAward || null,
+    proof_url: item.proofUrl || (item.proofImages && item.proofImages[0]) || null,
+    proof_images: item.proofImages || (item.proofUrl ? [item.proofUrl] : []),
+    published: item.published ?? true,
+    created_at: item.createdAt || new Date().toISOString(),
+  };
 
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const payload: any = {
-        id: validId,
-        title: item.title,
-        issuer_or_event: item.issuerOrEvent,
-        date: item.date,
-        description: item.description,
-        rank_or_award: item.rankOrAward || null,
-        proof_url: item.proofUrl || (item.proofImages && item.proofImages[0]) || null,
-        proof_images: item.proofImages || (item.proofUrl ? [item.proofUrl] : []),
-        published: item.published ?? true,
-        created_at: item.createdAt || new Date().toISOString(),
-      };
+  const { data, error } = await client
+    .from('portfolio_achievements')
+    .upsert(payload, { onConflict: 'id' })
+    .select()
+    .single();
 
-      const { data, error } = await client
-        .from('portfolio_achievements')
-        .upsert(payload, { onConflict: 'id' })
-        .select()
-        .single();
+  if (error) throw new Error(formatSupabaseError(error, 'achievement'));
 
-      if (error) throw new Error(formatSupabaseError(error, 'achievement'));
-      if (data?.id) savedItem.id = data.id;
-    }
-  }
+  const savedItem: AchievementItem = {
+    ...item,
+    id: data?.id || validId,
+    createdAt: data?.created_at || payload.created_at,
+  };
 
-  const current = await loadPortfolioData();
-  const index = current.achievements.findIndex(a => a.id === item.id || a.id === savedItem.id);
+  const index = stateCache.achievements.findIndex(a => a.id === item.id || a.id === savedItem.id);
   if (index >= 0) {
-    current.achievements[index] = savedItem;
+    stateCache.achievements[index] = savedItem;
   } else {
-    current.achievements.unshift(savedItem);
+    stateCache.achievements.unshift(savedItem);
   }
-  await savePortfolioData(current);
+  notifyListeners();
 }
 
 export async function deleteAchievement(id: string): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-      if (isUuid) {
-        const { error } = await client.from('portfolio_achievements').delete().eq('id', id);
-        if (error) throw new Error(formatSupabaseError(error, 'achievement'));
-      }
-    }
+  if (!isSupabaseConfigured()) throw new Error('Supabase connection required to delete achievement.');
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  if (isUuid) {
+    const { error } = await client.from('portfolio_achievements').delete().eq('id', id);
+    if (error) throw new Error(formatSupabaseError(error, 'achievement'));
   }
 
-  const current = await loadPortfolioData();
-  current.achievements = current.achievements.filter(a => a.id !== id);
-  await savePortfolioData(current);
+  stateCache.achievements = stateCache.achievements.filter(a => a.id !== id);
+  notifyListeners();
 }
 
 // -------------------------------------------------------------
 // RESUME (portfolio_resume)
 // -------------------------------------------------------------
 export async function saveResume(resume: ResumeData): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const client = getSupabaseClient();
-    if (client) {
-      const payload = {
-        file_url: resume.fileUrl || null,
-        file_name: resume.fileName || null,
-        file_size: resume.fileSize || null,
-        last_updated: resume.lastUpdated || new Date().toISOString(),
-        version_name: resume.versionName || null,
-        published: resume.published ?? true,
-      };
+  if (!isSupabaseConfigured()) throw new Error('Supabase connection required to save resume.');
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not available.');
 
-      const { data: existing } = await client.from('portfolio_resume').select('id').limit(1).maybeSingle();
-      if (existing?.id) {
-        const { error } = await client.from('portfolio_resume').update(payload).eq('id', existing.id);
-        if (error) throw new Error(`Failed to update resume: ${error.message}`);
-      } else {
-        const { error } = await client.from('portfolio_resume').insert(payload);
-        if (error) throw new Error(`Failed to save resume: ${error.message}`);
-      }
-    }
+  const payload = {
+    file_url: resume.fileUrl || null,
+    file_name: resume.fileName || null,
+    file_size: resume.fileSize || null,
+    last_updated: resume.lastUpdated || new Date().toISOString(),
+    version_name: resume.versionName || null,
+    published: resume.published ?? true,
+  };
+
+  const { data: existing, error: fetchErr } = await client.from('portfolio_resume').select('id').limit(1).maybeSingle();
+  if (fetchErr) throw new Error(formatSupabaseError(fetchErr, 'resume'));
+
+  if (existing?.id) {
+    const { error } = await client.from('portfolio_resume').update(payload).eq('id', existing.id);
+    if (error) throw new Error(formatSupabaseError(error, 'resume'));
+  } else {
+    const { error } = await client.from('portfolio_resume').insert(payload);
+    if (error) throw new Error(formatSupabaseError(error, 'resume'));
   }
 
-  const current = await loadPortfolioData();
-  current.resume = resume;
-  await savePortfolioData(current);
+  stateCache.resume = { ...resume };
+  notifyListeners();
 }
 
 // -------------------------------------------------------------
@@ -1107,6 +1094,8 @@ function base64ToFile(dataUrl: string, defaultName: string): File | null {
 
 export interface MigrationResult {
   success: boolean;
+  needsSqlRun?: boolean;
+  missingTable?: string;
   message: string;
   counts: {
     certificates: number;
@@ -1123,14 +1112,15 @@ export interface MigrationResult {
 
 /**
  * Migrates existing local browser data (IndexedDB/localStorage) to Supabase Cloud.
- * Converts Base64 data URLs to files in the public 'portfolio-assets' bucket and
- * saves all records to their respective Supabase tables.
+ * Converts Base64 data URLs to permanent files in the public 'portfolio-assets' bucket
+ * and saves all records to their respective Supabase tables.
  */
 export async function migrateLocalDataToSupabase(
   onProgress?: (status: string) => void
 ): Promise<MigrationResult> {
   const result: MigrationResult = {
     success: false,
+    needsSqlRun: false,
     message: '',
     counts: {
       certificates: 0,
@@ -1181,12 +1171,114 @@ export async function migrateLocalDataToSupabase(
     return result;
   }
 
-  onProgress?.('Migrating profile information...');
+  // STEP 1: UPLOAD ALL LOCAL MEDIA TO SUPABASE STORAGE ('portfolio-assets') FIRST
+  // This guarantees all files are saved in Supabase Storage regardless of database table status.
+  onProgress?.('Uploading certificate images to Supabase Storage...');
+  let hasMediaUpdated = false;
+
+  if (Array.isArray(localData.certificates)) {
+    for (const cert of localData.certificates) {
+      try {
+        // Upload primary image if it was saved locally as Base64
+        if (cert.fileUrl && cert.fileUrl.startsWith('data:')) {
+          const file = base64ToFile(cert.fileUrl, `cert_${cert.id || Date.now()}`);
+          if (file) {
+            const { url, error } = await uploadFileToSupabase(file, 'certificates');
+            if (url) {
+              cert.fileUrl = url;
+              hasMediaUpdated = true;
+            } else if (error) {
+              result.errors.push(`Upload cert error: ${error}`);
+            }
+          }
+        }
+
+        // Upload any multi-page images
+        if (Array.isArray(cert.images)) {
+          const newImages: string[] = [];
+          for (let i = 0; i < cert.images.length; i++) {
+            const img = cert.images[i];
+            if (img && img.startsWith('data:')) {
+              const file = base64ToFile(img, `cert_${cert.id || Date.now()}_page_${i + 1}`);
+              if (file) {
+                const { url } = await uploadFileToSupabase(file, 'certificates');
+                if (url) {
+                  newImages.push(url);
+                  hasMediaUpdated = true;
+                }
+              }
+            } else if (img) {
+              newImages.push(img);
+            }
+          }
+          if (newImages.length > 0) {
+            cert.images = newImages;
+            if (!cert.fileUrl) cert.fileUrl = newImages[0];
+          }
+        }
+      } catch (err: any) {
+        result.errors.push(`Media upload error for cert "${cert.title}": ${err.message}`);
+      }
+    }
+  }
+
+  // Upload project media
+  if (Array.isArray(localData.projects)) {
+    for (const proj of localData.projects) {
+      try {
+        if (proj.thumbnailUrl && proj.thumbnailUrl.startsWith('data:')) {
+          const file = base64ToFile(proj.thumbnailUrl, `proj_${proj.id || Date.now()}_thumb`);
+          if (file) {
+            const { url } = await uploadFileToSupabase(file, 'projects');
+            if (url) {
+              proj.thumbnailUrl = url;
+              hasMediaUpdated = true;
+            }
+          }
+        }
+      } catch (err: any) {
+        result.errors.push(`Media upload error for project "${proj.title}": ${err.message}`);
+      }
+    }
+  }
+
+  // Save the updated cloud URLs back into local store so progress is never lost
+  if (hasMediaUpdated) {
+    try {
+      await setIdbItem('full_portfolio_data', localData);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(localData));
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // STEP 2: CHECK IF DATABASE TABLES EXIST (Avoid PGRST205 errors)
+  onProgress?.('Checking Supabase database schema...');
+  let certsTableExists = await checkTableExists('portfolio_certificates');
+  if (!certsTableExists) {
+    // Attempt schema cache reload in case tables were just created
+    await reloadSupabaseSchemaCache();
+    certsTableExists = await checkTableExists('portfolio_certificates');
+  }
+
+  if (!certsTableExists) {
+    result.success = false;
+    result.needsSqlRun = true;
+    result.missingTable = 'portfolio_certificates';
+    result.message = "Certificate images are safely stored in Supabase Storage! To finish saving the database records, create the database tables in your Supabase SQL Editor, then click Finish Cloud Sync.";
+    return result;
+  }
+
+  // STEP 3: SAVE ALL RECORDS TO SUPABASE TABLES
+  onProgress?.('Saving records to Supabase tables...');
+
   if (localData.profile) {
     try {
       await updateProfile(localData.profile);
     } catch (e: any) {
-      result.errors.push(`Profile migration note: ${e.message}`);
+      result.errors.push(`Profile sync note: ${e.message}`);
     }
   }
 
@@ -1194,49 +1286,14 @@ export async function migrateLocalDataToSupabase(
     try {
       await saveSettings(localData.settings);
     } catch (e: any) {
-      result.errors.push(`Settings migration note: ${e.message}`);
+      result.errors.push(`Settings sync note: ${e.message}`);
     }
   }
 
-  // 3. Migrate Certificates
-  onProgress?.('Migrating certificates to Supabase Storage & Database...');
   if (Array.isArray(localData.certificates)) {
     for (const cert of localData.certificates) {
       try {
-        const updatedCert = { ...cert };
-        const newImages: string[] = [];
-
-        // Upload primary image if it was saved locally as Base64
-        if (cert.fileUrl && cert.fileUrl.startsWith('data:')) {
-          const file = base64ToFile(cert.fileUrl, `cert_${cert.id || Date.now()}`);
-          if (file) {
-            const { url, error } = await uploadFileToSupabase(file, 'certificates');
-            if (url) updatedCert.fileUrl = url;
-            else if (error) result.errors.push(`Upload cert error: ${error}`);
-          }
-        }
-
-        // Upload any multi-page images
-        if (Array.isArray(cert.images)) {
-          for (let i = 0; i < cert.images.length; i++) {
-            const img = cert.images[i];
-            if (img && img.startsWith('data:')) {
-              const file = base64ToFile(img, `cert_${cert.id || Date.now()}_page_${i + 1}`);
-              if (file) {
-                const { url } = await uploadFileToSupabase(file, 'certificates');
-                if (url) newImages.push(url);
-              }
-            } else if (img) {
-              newImages.push(img);
-            }
-          }
-          if (newImages.length > 0) {
-            updatedCert.images = newImages;
-            if (!updatedCert.fileUrl) updatedCert.fileUrl = newImages[0];
-          }
-        }
-
-        await saveCertificate(updatedCert);
+        await saveCertificate(cert);
         result.counts.certificates++;
       } catch (err: any) {
         result.errors.push(`Cert "${cert.title}": ${err.message}`);
@@ -1244,20 +1301,10 @@ export async function migrateLocalDataToSupabase(
     }
   }
 
-  // 4. Migrate Projects
-  onProgress?.('Migrating projects to Supabase...');
   if (Array.isArray(localData.projects)) {
     for (const proj of localData.projects) {
       try {
-        const updatedProj = { ...proj };
-        if (proj.thumbnailUrl && proj.thumbnailUrl.startsWith('data:')) {
-          const file = base64ToFile(proj.thumbnailUrl, `proj_${proj.id || Date.now()}_thumb`);
-          if (file) {
-            const { url } = await uploadFileToSupabase(file, 'projects');
-            if (url) updatedProj.thumbnailUrl = url;
-          }
-        }
-        await saveProject(updatedProj);
+        await saveProject(proj);
         result.counts.projects++;
       } catch (err: any) {
         result.errors.push(`Project "${proj.title}": ${err.message}`);
@@ -1265,8 +1312,6 @@ export async function migrateLocalDataToSupabase(
     }
   }
 
-  // 5. Migrate Experience
-  onProgress?.('Migrating experience...');
   if (Array.isArray(localData.experience)) {
     for (const exp of localData.experience) {
       try {
@@ -1278,8 +1323,6 @@ export async function migrateLocalDataToSupabase(
     }
   }
 
-  // 6. Migrate Internships
-  onProgress?.('Migrating internships...');
   if (Array.isArray(localData.internships)) {
     for (const intern of localData.internships) {
       try {
@@ -1291,8 +1334,6 @@ export async function migrateLocalDataToSupabase(
     }
   }
 
-  // 7. Migrate Events
-  onProgress?.('Migrating events...');
   if (Array.isArray(localData.events)) {
     for (const ev of localData.events) {
       try {
@@ -1304,8 +1345,6 @@ export async function migrateLocalDataToSupabase(
     }
   }
 
-  // 8. Migrate Education
-  onProgress?.('Migrating education...');
   if (Array.isArray(localData.education)) {
     for (const edu of localData.education) {
       try {
@@ -1317,8 +1356,6 @@ export async function migrateLocalDataToSupabase(
     }
   }
 
-  // 9. Migrate Skills
-  onProgress?.('Migrating skills...');
   if (Array.isArray(localData.skills)) {
     for (const sk of localData.skills) {
       try {
@@ -1330,8 +1367,6 @@ export async function migrateLocalDataToSupabase(
     }
   }
 
-  // 10. Migrate Achievements
-  onProgress?.('Migrating achievements...');
   if (Array.isArray(localData.achievements)) {
     for (const ach of localData.achievements) {
       try {
@@ -1343,19 +1378,30 @@ export async function migrateLocalDataToSupabase(
     }
   }
 
-  // 11. Migrate Resume
   if (localData.resume) {
     try {
       await saveResume(localData.resume);
     } catch (e: any) {
-      result.errors.push(`Resume migration note: ${e.message}`);
+      result.errors.push(`Resume sync note: ${e.message}`);
     }
   }
 
   result.success = result.errors.length === 0;
   result.message = result.success
-    ? 'All local data and certificate media successfully synced to Supabase cloud!'
-    : `Migration completed with ${result.errors.length} notice(s).`;
+    ? 'All local certificates, projects, and media successfully synced to Supabase Cloud!'
+    : `Sync completed with ${result.errors.length} notice(s).`;
+
+  // Clean up legacy local copy once successfully uploaded to cloud
+  if (result.success) {
+    try {
+      await setIdbItem('full_portfolio_data', null);
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(LOCAL_STORAGE_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   return result;
 }

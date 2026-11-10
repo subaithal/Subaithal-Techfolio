@@ -46,7 +46,8 @@ import {
   getSupabaseCredentials, 
   saveSupabaseCredentials, 
   testSupabaseConnection, 
-  getSupabaseClient 
+  getSupabaseClient,
+  SUPABASE_SQL_EDITOR_URL 
 } from '../lib/supabase';
 import { TeddyBear } from '../components/TeddyBear';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -419,7 +420,11 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       setMigrationResult(res);
       if (res.success) {
         await onRefreshData();
+        const updated = await getPendingLocalSyncCount();
+        setPendingSync(updated);
         triggerSuccessCelebration();
+      } else if (res.needsSqlRun) {
+        setIsSqlModalOpen(true);
       }
     } catch (err: any) {
       setMigrationResult({
@@ -629,6 +634,53 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         </div>
       )}
 
+      {/* Actionable Prompt if Tables Need Creation in Supabase (Fixes PGRST205) */}
+      {migrationResult?.needsSqlRun && (
+        <div className="bg-amber-950/70 border border-amber-500/40 text-amber-100 p-4 sm:p-5 rounded-[22px] shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
+              <h4 className="font-heading font-bold text-sm text-amber-200">
+                Images Saved in Storage! 1 Quick Step to Create Tables (Fixes PGRST205)
+              </h4>
+            </div>
+            <p className="text-xs text-amber-200/90 leading-relaxed">
+              Your certificate images were safely uploaded to Supabase Storage. To finish saving records, run the SQL script in your Supabase SQL Editor, then click <strong>Complete Cloud Sync</strong>.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <a
+              href={SUPABASE_SQL_EDITOR_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>Open Supabase SQL</span>
+            </a>
+            <button
+              onClick={() => setIsSqlModalOpen(true)}
+              className="px-3.5 py-2 rounded-xl bg-rose-950 border border-amber-500/40 text-amber-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              <Database className="w-3.5 h-3.5" />
+              <span>Copy SQL</span>
+            </button>
+            <button
+              onClick={async () => {
+                await handleMigrateLocalData();
+                const updated = await getPendingLocalSyncCount();
+                setPendingSync(updated);
+              }}
+              disabled={isMigrating}
+              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>Complete Cloud Sync</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Lifetime Access & Permanent Data Guarantee Banner */}
       <div className="p-3.5 bg-gradient-to-r from-emerald-500/15 via-pink-500/10 to-emerald-500/15 border border-emerald-600/30 rounded-2xl flex items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2.5">
@@ -637,10 +689,10 @@ export const AdminPage: React.FC<AdminPageProps> = ({
           </div>
           <div>
             <span className="font-heading font-bold text-[#3A0F05] block">
-              Lifetime Storage Active & Permanent Data Guarantee
+              Supabase Cloud Storage & Real-Time Sync Active
             </span>
             <span className="text-[11px] text-[#4F2119]/85">
-              Nothing will ever be deleted on its own. Saved permanently in browser IndexedDB + synchronized with Supabase cloud. Add unlimited projects, certificates, and multiple photos anytime.
+              Certificates, project media, and records are stored directly in Supabase Cloud ('portfolio-assets' bucket & database). Visible to all visitors across every device and browser in real time.
             </span>
           </div>
         </div>
